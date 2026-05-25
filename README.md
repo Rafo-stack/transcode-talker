@@ -19,9 +19,37 @@ curl -O https://raw.githubusercontent.com/Rafo-stack/transcode-talker/main/docke
 docker compose -f docker-compose.prod.yml up -d
 ```
 
-Open `http://<host>:4246/` in your browser, point it at your media folders under **Settings → Scan folders**, and start encoding.
+Open `http://localhost:4246/` in your browser, point it at your media folders under **Settings → Scan folders**, and start encoding.
 
 > Production compose pulls pre-built images from GitHub Container Registry. To build from source instead, clone the repo and use the regular `docker-compose.yml`.
+
+## Platform support
+
+Works on **Linux**, **macOS**, and **Windows**. The quick-start command above is identical on all three.
+
+### Linux (recommended)
+
+Native target. Everything works out of the box: VAAPI/QSV via `/dev/dri`, NVENC via the NVIDIA container toolkit, persistent volumes under `./data/`. This is where you get full hardware acceleration with no extra setup.
+
+### Windows (Docker Desktop + WSL2)
+
+1. Install [Docker Desktop](https://www.docker.com/products/docker-desktop/) and enable the **WSL2 backend** in its settings (Settings → General → "Use the WSL 2 based engine").
+2. Install a WSL2 Linux distro from the Microsoft Store (Ubuntu is the most common choice) and open its terminal.
+3. Run the quick-start commands from inside the WSL terminal. They work as-is.
+4. Edit the volume mounts in `docker-compose.prod.yml` to point at your Windows folders. WSL2 auto-mounts your Windows drives at `/mnt/<letter>`, so a typical setup looks like:
+
+   ```yaml
+   volumes:
+     - /mnt/c/Users/<you>/Videos:/mnt/media
+     - /mnt/d/Anime:/mnt/animes
+     - /mnt/c/temp/reencoder:/mnt/hdd
+   ```
+
+5. Hardware acceleration is limited on Windows. **CPU encoding (libx265) always works.** NVENC is possible through the [NVIDIA Container Toolkit for WSL2](https://docs.nvidia.com/cuda/wsl-user-guide/index.html) but requires extra setup. AMD VAAPI and Intel QSV are not available through Docker Desktop on Windows.
+
+### macOS (Docker Desktop)
+
+Works via Docker Desktop, but **CPU encoding only**. Hardware encoders aren't exposed through Docker's macOS virtualization layer, so you'll fall back to libx265. Fine for occasional jobs, slow for large libraries — use a Linux server if you have one.
 
 ---
 
@@ -75,10 +103,10 @@ Mount the folders you want to scan/encode into the worker (edit `docker-compose.
 
 The worker auto-detects and uses the first available encoder, in this order:
 
-1. **VAAPI** (AMD/Intel): mount `/dev/dri:/dev/dri` and the container will use it
-2. **QSV** (Intel Quick Sync): same `/dev/dri` mount, different code path
-3. **NVENC** (NVIDIA): requires the `nvidia` runtime
-4. **libx265** (CPU): always available as fallback
+1. **VAAPI** (AMD/Intel) — Linux only. Mount `/dev/dri:/dev/dri` and the container will use it.
+2. **QSV** (Intel Quick Sync) — Linux only. Same `/dev/dri` mount, different code path.
+3. **NVENC** (NVIDIA) — Linux native, or Windows via the NVIDIA Container Toolkit for WSL2.
+4. **libx265** (CPU) — always available as a fallback on every platform.
 
 You can also force a specific encoder under **Settings → Encoding**.
 
