@@ -9,6 +9,13 @@
 
 Transcode Talker scans your media library, queues oversized files, and re-encodes them to HEVC with hardware acceleration. Original files get replaced atomically. Every encode is recorded so you never re-process the same file twice.
 
+## Personal Note - Why I created this
+
+Mostly because of the lack of a good reencoder for Linux, as I moved my entire homelab from Windows to Linux.
+HandBrake works on Linux but it's awful, and Tdarr is WAY too complex for someone who just wants to reduce their library size.
+
+I feel I need to be transparent, especially with so many comments on the internet. I work in IT and I know how to architect software and stuff - as I work as an IT project/product manager - and I consider myself very technical, but I must say my coding skills are 0. So yes, I created this project with AI, with a lot of documentation and testing, and I've been cooking this project for 5 months now to avoid AI slop and ship this release. Although there are bugs and things to improve, this project is my first personal release and it solved a VERY big problem I had in my homelab, which I hope will be useful for someone else who wants to reencode a HUGE library, using Linux, and just wants a simple and functional UI!!!
+
 ---
 
 ## Quick start
