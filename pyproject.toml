@@ -1,0 +1,27 @@
+# M-010: linting + formatting config. Install dev deps with:
+#   pip install -r requirements-dev.txt
+# Then run: `ruff check .` and `black .`.
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["data", "tests/__pycache__"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = [
+  "E501",  # line-length handled by black
+  "E741",  # ambiguous variable names (some single-letter loops are fine here)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011"]  # asserts in tests are fine
+
+[tool.black]
+line-length = 100
+target-version = ["py312"]
+extend-exclude = '''
+(
+  /data/
+)
+'''

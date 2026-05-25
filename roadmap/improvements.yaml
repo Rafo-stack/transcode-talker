@@ -1,0 +1,111 @@
+# Improvements scoped against the v0.3.5 UI rebuild.
+
+- id: I-201
+  title: Full UI rewrite with React + Vite + Tailwind
+  status: done
+  priority: High
+  area: frontend
+  targeted_version: "0.3.5.0"
+  summary: >
+    Replace the single ~2300-line static/index.html (Babel-in-browser, no
+    build) with a proper Vite-built React + Tailwind app served by nginx.
+  plain_summary: |
+    The whole UI you're using right now is the new one. The previous
+    interface was a single 2300-line HTML file that loaded React through a
+    browser polyfill and compiled JSX on the fly — slow boot, no type
+    safety, hard to refactor. The new version is a TypeScript app served as
+    a static bundle.
+  details: |
+    - New folder: `frontend/` (React 18, TypeScript, Vite 6, Tailwind 3).
+    - New service: `reencoder-web` (nginx) in `docker-compose.yml`.
+    - Tokenized theme via CSS custom properties (`--bg`, `--fg`, `--accent`).
+    - Sidebar layout with persistent collapse + submenus.
+
+- id: I-202
+  title: Persistent collapsible sidebar with submenu groups
+  status: done
+  priority: High
+  area: frontend
+  targeted_version: "0.3.5.0"
+  summary: >
+    Replace the top-tab nav with a vertical sidebar that supports nested
+    children (Settings → General/Encoding/Customize/Storage/Database/Roadmap)
+    and remembers its collapse state.
+  plain_summary: |
+    Settings used to be a single flat page that scrolled forever. Now each
+    setting category has its own page under Settings in the sidebar, and
+    your collapse preference is saved between sessions.
+  details: |
+    `frontend/src/components/layout/AppLayout.tsx`. State persisted to
+    localStorage under `reenc.sidebar.collapsed` and `reenc.sidebar.submenu.*`.
+
+- id: I-203
+  title: Admin Logs page with SSE stream and time-window filters
+  status: done
+  priority: Medium
+  area: backend
+  targeted_version: "0.3.5.0"
+  summary: >
+    Server-side ring buffer of structured log entries exposed via
+    `/api/admin/logs/recent` (back-fill) + `/api/admin/logs/stream` (SSE).
+  plain_summary: |
+    Until now, debugging the worker meant running `docker logs` in a
+    terminal. The Admin → Logs page exposes the same stream in the browser,
+    with filters by level and a rolling time window, so anyone can
+    investigate without SSH access.
+  details: |
+    `reencoder-api/app/main.py` — new structured logging handler with an
+    in-memory ring buffer (default capacity 5000 entries) and an SSE
+    endpoint. The UI reuses the pattern from Ultimate Collector
+    (`AdminLogsPage.tsx`).
+
+- id: I-204
+  title: Roadmap page driven by YAML files
+  status: done
+  priority: Medium
+  area: backend
+  targeted_version: "0.3.5.0"
+  summary: >
+    Read `roadmap/bugs.yaml`, `improvements.yaml`, `features.yaml` and serve
+    them as `/api/roadmap`. Hot-reload on file mtime change.
+  plain_summary: |
+    You can now see the current state of the project (bugs/improvements/
+    features) in the UI itself. The data lives in plain YAML in the repo
+    so changes are reviewable in git.
+  details: |
+    Files mounted read-only into the API container at `/app/roadmap`. The
+    endpoint validates the schema and returns counts + items.
+
+- id: I-205
+  title: Replace inline-styled badges with theme-aware Tailwind components
+  status: done
+  priority: Low
+  area: frontend
+  targeted_version: "0.3.5.0"
+  summary: >
+    Hardcoded `#14532d44`-style backgrounds are gone; status badges now use
+    `bg-success/10 text-success border-success/30` and adapt to dark/light.
+  plain_summary: |
+    The status pills (done / failed / skipped) used to use raw hex colors
+    that didn't switch between dark and light theme. They now use the same
+    semantic tokens as the rest of the UI.
+  details: |
+    `frontend/src/components/ui/Badge.tsx`. Single `StatusBadge` component
+    consumed everywhere a job/scan/file state needs to be rendered.
+
+- id: I-206
+  title: Dashboard with KPIs (encoded, saved, success rate, HDD)
+  status: done
+  priority: Medium
+  area: frontend
+  targeted_version: "0.3.5.0"
+  summary: >
+    Landing page summarising history.stats + hdd.status with quick links to
+    the main flows.
+  plain_summary: |
+    Before, the app opened straight into the scan page with no overview.
+    The new Dashboard tells you how much space you saved, how many jobs
+    you've run, your success rate and how full /mnt/hdd is, with shortcuts
+    to the main features.
+  details: |
+    `frontend/src/pages/DashboardPage.tsx`.

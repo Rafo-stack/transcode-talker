@@ -1,0 +1,112 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --bg: 250 250 252;
+    --bg-subtle: 245 245 247;
+    --bg-card: 255 255 255;
+    --fg: 17 17 23;
+    --fg-muted: 100 100 110;
+    --border: 226 226 232;
+    /* Brand color: teal. tailwind teal-500 (#14b8a6) for light theme. */
+    --accent: 20 184 166;
+    --accent-hover: 13 148 136;
+    --danger: 239 68 68;
+    --success: 34 197 94;
+    --warning: 245 158 11;
+  }
+
+  .dark {
+    --bg: 10 10 14;
+    --bg-subtle: 18 18 24;
+    --bg-card: 22 22 30;
+    --fg: 240 240 245;
+    --fg-muted: 156 156 168;
+    --border: 38 38 48;
+    /* tailwind teal-400 (#2dd4bf) — brighter so it reads on dark surfaces. */
+    --accent: 45 212 191;
+    --accent-hover: 94 234 212;
+    --danger: 248 113 113;
+    --success: 74 222 128;
+    --warning: 251 191 36;
+  }
+
+  html, body, #root { height: 100%; }
+
+  body {
+    @apply bg-bg text-fg font-sans antialiased;
+  }
+
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgb(var(--border)); border-radius: 999px; }
+  ::-webkit-scrollbar-thumb:hover { background: rgb(var(--fg-muted) / 0.4); }
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap;
+  }
+  .btn-primary {
+    @apply btn bg-accent text-white hover:bg-accent-hover;
+  }
+  .btn-secondary {
+    @apply btn bg-bg-subtle text-fg border border-border hover:bg-bg-card;
+  }
+  .btn-ghost {
+    @apply btn text-fg-muted hover:bg-bg-subtle hover:text-fg;
+  }
+  .btn-danger {
+    @apply btn bg-danger/10 text-danger border border-danger/30 hover:bg-danger/20;
+  }
+  .btn-success {
+    @apply btn bg-success/10 text-success border border-success/30 hover:bg-success/20;
+  }
+  .input {
+    @apply w-full px-3 py-2 rounded-lg bg-bg-card border border-border text-sm text-fg placeholder:text-fg-muted focus:outline-none focus:ring-2 focus:ring-accent/40 focus:border-accent transition;
+  }
+  .card {
+    @apply bg-bg-card border border-border rounded-xl shadow-soft;
+  }
+  .badge {
+    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium;
+  }
+  .label {
+    @apply text-xs font-medium text-fg-muted uppercase tracking-wide;
+  }
+
+  .prose-roadmap {
+    @apply text-sm text-fg leading-relaxed;
+  }
+  .prose-roadmap h1,
+  .prose-roadmap h2,
+  .prose-roadmap h3 {
+    @apply font-semibold text-fg mt-4 mb-2 first:mt-0;
+  }
+  .prose-roadmap h1 { @apply text-lg; }
+  .prose-roadmap h2 { @apply text-base; }
+  .prose-roadmap h3 { @apply text-sm uppercase tracking-wide text-fg-muted; }
+  .prose-roadmap p { @apply my-2; }
+  .prose-roadmap a {
+    @apply text-accent underline underline-offset-2 hover:text-accent-hover;
+  }
+  .prose-roadmap ul, .prose-roadmap ol {
+    @apply my-2 pl-5 space-y-1;
+  }
+  .prose-roadmap ul { @apply list-disc; }
+  .prose-roadmap ol { @apply list-decimal; }
+  .prose-roadmap li > p { @apply my-0; }
+  .prose-roadmap code {
+    @apply bg-bg-subtle border border-border rounded px-1 py-0.5 text-xs font-mono;
+  }
+  .prose-roadmap pre {
+    @apply bg-bg-subtle border border-border rounded-lg p-3 my-3 overflow-x-auto text-xs leading-snug;
+  }
+  .prose-roadmap pre code { @apply bg-transparent border-0 p-0; }
+  .prose-roadmap blockquote {
+    @apply border-l-4 border-border pl-3 my-3 text-fg-muted italic;
+  }
+  .prose-roadmap strong { @apply font-semibold text-fg; }
+}

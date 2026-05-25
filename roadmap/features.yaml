@@ -1,0 +1,103 @@
+# New feature ideas — not committed, just on the table.
+
+- id: F-301
+  title: Encode preset profiles (saveable, switchable)
+  status: planned
+  priority: High
+  area: backend
+  targeted_version: "0.4.0.0"
+  summary: >
+    Let the user save encoder + preset + CRF + audio settings as named
+    profiles and switch between them per session.
+  plain_summary: |
+    Today there's one global "encoding settings" block. We'd like to save
+    multiple profiles ("anime / x265 CRF 22", "movies / x264 CRF 23") and
+    pick one when starting an encode — useful if you have different rules
+    for different folders.
+  details: |
+    Schema: `encode_profiles(id, name, encoder, preset, crf, audio_codec,
+    audio_bitrate, created_at)`. New endpoints under `/api/profiles`.
+    The Scan page would render a profile dropdown next to the Encode
+    button, defaulting to the last-used profile.
+
+- id: F-302
+  title: Per-folder default encode profile
+  status: planned
+  priority: Medium
+  area: backend
+  targeted_version: "0.4.0.0"
+  summary: >
+    Allow attaching a default profile to a scan folder so anime/* uses
+    x265 and movies/* uses x264 automatically.
+  plain_summary: |
+    Builds on F-301: instead of picking a profile every time, you map a
+    folder to a profile once and the right settings get applied whenever
+    you encode from that folder.
+  details: |
+    Stored alongside `scan_folders` in config; resolved at queue-build time.
+    Each file inherits the profile of its closest matching folder.
+
+- id: F-303
+  title: Browser notifications when the queue completes
+  status: open
+  priority: Low
+  area: frontend
+  targeted_version: "0.4.0.0"
+  summary: >
+    Optionally fire a Notification API toast (with permission) when a
+    long-running session ends so the user doesn't need to keep checking.
+  plain_summary: |
+    For long encodes (several hours), it's annoying to alt-tab back to the
+    browser to check progress. With your permission, we'd surface a system
+    notification when the queue finishes (or hits an error).
+  details: |
+    Behind a per-user toggle in Settings → Customize. Triggered from the
+    `queue_done` / `queue_stopped` WebSocket events.
+
+- id: F-304
+  title: Re-encode action on history rows
+  status: open
+  priority: Medium
+  area: frontend
+  targeted_version: "0.4.0.0"
+  summary: >
+    Inline action on each history row to re-queue that exact file with the
+    current settings (useful after tweaking the preset / CRF).
+  plain_summary: |
+    Once you tweak the encoding settings, you often want to re-run a single
+    file you weren't happy with. Today you have to scan the folder again.
+    We'd add a small action on each history row that re-queues it directly.
+  details: |
+    Skips the scan step; pushes the path straight into the encode queue
+    via `POST /api/encode/start` (or `/queue/add` when a session is
+    running). Confirms before overwriting an existing output.
+
+- id: F-305
+  title: Per-file cancel that keeps the queue running
+  status: planned
+  priority: Medium
+  area: backend
+  targeted_version: "0.4.0.0"
+  summary: >
+    Today, clicking the X button on the file currently being encoded stops
+    the entire session. We want a way to cancel just that file and let the
+    worker move on to the next one.
+  plain_summary: |
+    The X button next to a queued file works the way you'd expect: the file
+    is removed from the queue. But when you click X on the file that is
+    *currently* being encoded, the whole queue stops — because that's the
+    only stop signal the worker understands today. We want that to become
+    "stop this file only, continue with the rest".
+  details: |
+    Implementation sketch:
+      1. Add a `cancel_requested INTEGER DEFAULT 0` column to the `jobs` table.
+      2. In the worker's `make_stop_check`, also poll the job-level flag
+         for the *current* job_id and return True when it flips.
+      3. In `process_session`, distinguish between "session interrupted"
+         (bail out) and "current job cancelled" (mark interrupted, continue
+         to the next queued job).
+      4. New API behavior: `POST /api/jobs/{id}/cancel` on an encoding job
+         sets `cancel_requested=1` instead of stopping the whole session.
+
+    Until this ships, the API stops the session and the UI warns the user
+    before sending the request.

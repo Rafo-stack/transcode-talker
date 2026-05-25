@@ -1,0 +1,99 @@
+# Open bugs identified during the v0.3.5 UI rebuild audit.
+# Each entry follows the same shape as Ultimate Collector's roadmap so the
+# /api/roadmap endpoint can return all categories from a single shape.
+
+- id: B-101
+  title: Config polled every 5 seconds in the legacy UI
+  status: done
+  severity: Low
+  priority: Medium
+  area: frontend
+  targeted_version: "0.3.5.0"
+  summary: >
+    The legacy static/index.html refetched /api/config on a 5-second interval
+    just to pick up theme/accent/brand changes done in the Settings page.
+  plain_summary: |
+    The old UI re-asked the server for its config every 5 seconds — wasteful,
+    and any change you made took up to 5s to apply. The new UI applies theme
+    and accent changes immediately client-side and only saves to the server
+    when you click *Save*.
+  details: |
+    Tracked at `static/index.html:2061` (`setInterval(() => api.get('/api/config'), 5000)`).
+    The new React frontend uses TanStack Query with a `staleTime` so the
+    config is fetched on mount and on save invalidation only.
+
+- id: B-102
+  title: Light theme rendered selected rows unreadable
+  status: done
+  severity: Medium
+  priority: Medium
+  area: frontend
+  targeted_version: "0.3.5.0"
+  summary: >
+    `--selected-bg` was hardcoded to `#1e2233` so in light mode the dark
+    text rendered on top of a dark-blue tile and disappeared.
+  plain_summary: |
+    In light mode, when you selected a file in the queue, the row got dark
+    blue but the text stayed dark too — so the line you just clicked was
+    invisible. Fixed by moving every color to CSS variables that adapt to
+    the active theme.
+  details: |
+    See `static/index.html:17-22` for the previous comment / partial fix.
+    The new design uses Tailwind tokens (`bg-bg-card`, `text-fg`) that resolve
+    against `--bg`, `--fg`, etc., so the theme switch flips every surface.
+
+- id: B-103
+  title: WebSocket reconnect doesn't surface a "disconnected" state in the UI
+  status: open
+  severity: Low
+  priority: Low
+  area: frontend
+  targeted_version: "0.3.5.2"
+  summary: >
+    When the API container restarts, the legacy UI silently reconnects via
+    exponential backoff but never tells the user the live progress bar is
+    stale.
+  plain_summary: |
+    If the API container restarts mid-encode, the screen used to keep showing
+    the last value it received with no indication that the live updates had
+    stopped. The new UI exposes a "live/offline" pill on Admin Logs already;
+    we want the same indicator on the Encode page.
+  details: |
+    `static/index.html:2234-2243`. The new `useWebSocket` hook in
+    `frontend/src/hooks/useWebSocket.ts` exposes `{ connected, attempts }` —
+    plug it into `EncodeBar` to render a chip when `!connected`.
+
+- id: B-104
+  title: HDD page silently fails on hosts without /mnt/hdd
+  status: open
+  severity: Low
+  priority: Low
+  area: backend
+  targeted_version: "0.3.5.2"
+  summary: >
+    `/api/hdd/status` returns an empty object when the mount is missing
+    instead of an explicit "not configured" signal.
+  plain_summary: |
+    If you don't mount /mnt/hdd into the container, the Storage page just
+    shows zeros instead of telling you the mount is missing.
+  details: |
+    `reencoder-api/app/main.py:1155-1192`. Add a `not_mounted: true` flag
+    so the UI can render a clear "no mount" message and a link to the docs.
+
+- id: B-105
+  title: History export streams the whole table into memory
+  status: open
+  severity: Medium
+  priority: Low
+  area: backend
+  targeted_version: "0.3.5.2"
+  summary: >
+    `/api/history/export` loads every row before returning the response,
+    which on a 50k-row history can stall the API for several seconds.
+  plain_summary: |
+    Exporting a very large history (tens of thousands of rows) freezes the
+    API briefly. We want to stream the response row by row so the UI gets
+    feedback and memory usage stays flat.
+  details: |
+    `reencoder-api/app/main.py:859`. Convert to `StreamingResponse` writing
+    NDJSON. The import endpoint already handles arbitrary line counts.

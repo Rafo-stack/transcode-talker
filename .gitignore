@@ -1,0 +1,111 @@
+# ──────────────────────────────────────────────────────────────
+# reencoder-v3 — .gitignore
+# ──────────────────────────────────────────────────────────────
+
+# === Documentação interna + contexto pessoal (não publicado) ===
+Documentacao/
+CLAUDE.md
+
+# === Runtime / dados do volume (NUNCA commitar) ===
+data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# === Secrets reais (apenas .env.example vai pro git) ===
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*credentials*
+*secret*
+
+# === Python ===
+# Anchored with leading "/" so they only match at repo root —
+# otherwise patterns like "lib/" would silently eat frontend/src/lib/.
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+/build/
+/develop-eggs/
+/downloads/
+/eggs/
+/.eggs/
+/lib/
+/lib64/
+/parts/
+/sdist/
+/var/
+/wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+
+# === Node / Vite / frontend ===
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/.parcel-cache/
+frontend/.cache/
+.npm/
+.pnpm-store/
+.yarn/
+*.tsbuildinfo
+
+# === macOS / Windows / Linux metadados ===
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# === IDE / editor ===
+.vscode/
+.idea/
+*.swp
+*.swo
+*.swn
+*~
+.project
+.classpath
+
+# === Logs locais ===
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# === OneDrive cruft ===
+.cloud
+~$*
+
+# === Outros ===
+*.bak
+*.backup
+*.tmp
+*.temp
+.fleet/

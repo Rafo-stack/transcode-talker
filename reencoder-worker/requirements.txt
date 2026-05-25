@@ -1,0 +1,4 @@
+# Worker depends on SQLAlchemy so the same DAL code works in both
+# SQLite (default) and Postgres (when DB_BACKEND=postgres).
+SQLAlchemy==2.0.36
+psycopg2-binary==2.9.10

@@ -1,0 +1,136 @@
+services:
+
+  # v3.4: Postgres is the production default. Subindo com
+  #   docker compose build && docker compose up -d
+  # você já recebe Postgres. Não precisa mais de --profile.
+  # SQLite continua suportado via DB_BACKEND=sqlite (sem postgres service).
+  postgres:
+    image: postgres:16-alpine
+    container_name: reencoder-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER:     ${POSTGRES_USER:-reencoder}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-reencoder}
+      POSTGRES_DB:       ${POSTGRES_DB:-reencoder}
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-reencoder} -d $${POSTGRES_DB:-reencoder}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - reencoder-net
+
+  reencoder-api:
+    build: ./reencoder-api
+    container_name: reencoder-api
+    restart: unless-stopped
+    # v3.5: no longer published on the host — the new reencoder-web nginx
+    # container is the public entry point and reverse-proxies /api/* and /ws
+    # to this service over the docker network.
+    expose:
+      - "4246"
+    volumes:
+      - ./data:/data
+      - ./roadmap:/app/roadmap:ro
+      - /mnt/animes:/mnt/animes
+      - /mnt/media:/mnt/media
+      - /mnt/hdd:/mnt/hdd
+    environment:
+      - PYTHONUNBUFFERED=1
+      - TZ=${TZ:-America/New_York}
+      # M-003: set both to enable HTTP Basic auth on every endpoint except /api/health.
+      - BASIC_AUTH_USER=${BASIC_AUTH_USER:-}
+      - BASIC_AUTH_PASS=${BASIC_AUTH_PASS:-}
+      # v3.4: Postgres é o default. Para usar SQLite, defina DB_BACKEND=sqlite no .env.
+      - DB_BACKEND=${DB_BACKEND:-postgres}
+      - POSTGRES_HOST=${POSTGRES_HOST:-postgres}
+      - POSTGRES_PORT=${POSTGRES_PORT:-5432}
+      - POSTGRES_USER=${POSTGRES_USER:-reencoder}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-reencoder}
+      - POSTGRES_DB=${POSTGRES_DB:-reencoder}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:4246/api/health', timeout=3).status==200 else 1)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    networks:
+      - reencoder-net
+
+  reencoder-worker:
+    build: ./reencoder-worker
+    container_name: reencoder-worker
+    restart: unless-stopped
+    devices:
+      - /dev/dri:/dev/dri
+    volumes:
+      - ./data:/data
+      - /mnt/animes:/mnt/animes
+      - /mnt/media:/mnt/media
+      - /mnt/hdd:/mnt/hdd
+    environment:
+      - PYTHONUNBUFFERED=1
+      - TZ=${TZ:-America/New_York}
+      - DB_BACKEND=${DB_BACKEND:-postgres}
+      - POSTGRES_HOST=${POSTGRES_HOST:-postgres}
+      - POSTGRES_PORT=${POSTGRES_PORT:-5432}
+      - POSTGRES_USER=${POSTGRES_USER:-reencoder}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-reencoder}
+      - POSTGRES_DB=${POSTGRES_DB:-reencoder}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      # M-005: worker writes a heartbeat file each iteration; check it's fresh.
+      test: ["CMD-SHELL", "test -f /data/.worker_heartbeat && test $(( $(date +%s) - $(stat -c %Y /data/.worker_heartbeat) )) -lt 30"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    networks:
+      - reencoder-net
+    deploy:
+      resources:
+        limits:
+          cpus: "8"
+          memory: 8G   # M-012: preset slow + 4K libx265 can exceed 4G; doubled for safety.
+
+  # v3.5: new SPA frontend. Production-built React bundle served by nginx,
+  # which also reverse-proxies /api/* and /ws to the FastAPI container.
+  reencoder-web:
+    build: ./frontend
+    container_name: reencoder-web
+    restart: unless-stopped
+    ports:
+      - "4246:80"
+    depends_on:
+      reencoder-api:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - reencoder-net
+
+networks:
+  reencoder-net:
+    driver: bridge

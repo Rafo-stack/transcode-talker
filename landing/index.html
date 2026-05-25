@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Transcode Talker — Reclaim disk space, automatically</title>
+<meta name="description" content="Self-hosted HEVC re-encoding pipeline with VAAPI/QSV/NVENC support. FastAPI + React + PostgreSQL + Docker. Reclaim disk space from your media library, automatically." />
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<!-- ───────── NAV ───────── -->
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="#" class="brand">
+      <svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true">
+        <rect width="32" height="32" rx="8" fill="url(#brandGrad)"/>
+        <path d="M9 11h14M16 11v11" stroke="#0a0f0e" stroke-width="2.5" stroke-linecap="round"/>
+        <defs>
+          <linearGradient id="brandGrad" x1="0" y1="0" x2="32" y2="32">
+            <stop offset="0" stop-color="#5eead4"/><stop offset="1" stop-color="#14b8a6"/>
+          </linearGradient>
+        </defs>
+      </svg>
+      <span>Transcode Talker</span>
+    </a>
+    <div class="nav-links">
+      <a href="#features">Features</a>
+      <a href="#how">How it works</a>
+      <a href="#screens">Screens</a>
+      <a href="#stack">Stack</a>
+      <a href="#install">Install</a>
+      <a href="#" class="nav-cta" id="githubLink">GitHub →</a>
+    </div>
+    <button class="nav-toggle" aria-label="Menu">☰</button>
+  </div>
+</nav>
+
+<!-- ───────── HERO ───────── -->
+<header class="hero">
+  <div class="hero-glow"></div>
+  <div class="container hero-grid">
+    <div class="hero-copy">
+      <span class="pill">v0.3.5.1 · self-hosted · open source</span>
+      <h1>Reclaim disk space<br/><span class="grad">on autopilot.</span></h1>
+      <p class="lead">
+        Transcode Talker scans your media library, queues oversized files,
+        re-encodes them to HEVC with hardware acceleration, and gives you
+        back tens of gigabytes, without you ever opening HandBrake again.
+      </p>
+      <div class="hero-cta">
+        <a class="btn primary" href="#install">Get started</a>
+        <a class="btn ghost" href="#screens">See the UI</a>
+      </div>
+      <ul class="hero-bullets">
+        <li>✓ Hardware accelerated: VAAPI · QSV · NVENC · CPU fallback</li>
+        <li>✓ Postgres or SQLite, your call</li>
+        <li>✓ Self-hosted web app, runs in your browser</li>
+      </ul>
+    </div>
+
+    <div class="hero-mock">
+      <!-- Browser frame with Dashboard mock -->
+      <div class="window">
+        <div class="window-bar">
+          <span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span>
+          <div class="window-url">transcode-talker.local<span class="window-path">/dashboard</span></div>
+        </div>
+        <div class="window-body app">
+          <aside class="app-sidebar">
+            <div class="app-brand">
+              <div class="app-brand-mark">TT</div><span>Transcode Talker</span>
+            </div>
+            <div class="app-nav-item active">⬛ Dashboard</div>
+            <div class="app-nav-item">⌕ Scan</div>
+            <div class="app-nav-item">▶ Encode</div>
+            <div class="app-nav-item">⌃ History</div>
+            <div class="app-nav-item">⛯ Roadmap</div>
+            <div class="app-nav-item">⚙ Settings</div>
+          </aside>
+          <main class="app-main">
+            <div class="app-header">
+              <h3>Dashboard</h3>
+              <span class="chip">live</span>
+            </div>
+            <div class="kpi-grid">
+              <div class="kpi"><div class="kpi-label">Total Encoded</div><div class="kpi-value">922</div><div class="kpi-trend up">+18 this week</div></div>
+              <div class="kpi"><div class="kpi-label">Space Saved</div><div class="kpi-value">181 <small>GB</small></div><div class="kpi-trend up">34.2% avg</div></div>
+              <div class="kpi"><div class="kpi-label">Queue</div><div class="kpi-value">3</div><div class="kpi-trend">running</div></div>
+            </div>
+            <div class="progress-card">
+              <div class="progress-head">
+                <span>Now encoding · Baka and Test S00E09.mkv</span>
+                <span>62%</span>
+              </div>
+              <div class="progress"><div class="progress-bar" style="width:62%"></div></div>
+              <div class="progress-meta">VAAPI · CRF 26 · 334 fps · ETA 2m 04s</div>
+            </div>
+          </main>
+        </div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- ───────── STATS strip ───────── -->
+<section class="stats">
+  <div class="container stats-grid">
+    <div class="stat">
+      <div class="stat-num">up to 80<span>%</span></div>
+      <div class="stat-cap">Smaller files with HEVC compression</div>
+    </div>
+    <div class="stat">
+      <div class="stat-num">4</div>
+      <div class="stat-cap">Encoders: VAAPI, QSV, NVENC, libx265 CPU</div>
+    </div>
+    <div class="stat">
+      <div class="stat-num">6</div>
+      <div class="stat-cap">UI languages: EN, PT, ES, FR, ZH, JA</div>
+    </div>
+    <div class="stat">
+      <div class="stat-num">MIT</div>
+      <div class="stat-cap">Open source, self-hosted, no cloud</div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────── FEATURES ───────── -->
+<section id="features" class="features">
+  <div class="container">
+    <div class="section-head">
+      <span class="eyebrow">Features</span>
+      <h2>Built for entire media libraries.</h2>
+      <p>Designed for a single goal: shrink your library without losing quality, and never run the same conversion twice.</p>
+    </div>
+
+    <div class="feature-grid">
+      <div class="feature">
+        <div class="feature-icon">⚡</div>
+        <h3>Hardware acceleration</h3>
+        <p>VAAPI (AMD/Intel), QSV (Intel), or NVENC (NVIDIA). Automatically falls back to libx265 CPU when no GPU is mounted.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">⌕</div>
+        <h3>Filesystem scan</h3>
+        <p>Walk any number of folders, filter by minimum size, and queue only files that aren't already HEVC.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">⌃</div>
+        <h3>Full history with audit</h3>
+        <p>Every encode is recorded with hash, FPS, encoder used, CRF, and space saved. Export/import as JSON.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">⚙</div>
+        <h3>Postgres or SQLite</h3>
+        <p>Postgres is the production default; SQLite stays for single-user setups. Switch with one env var.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">⌬</div>
+        <h3>Live progress over WebSocket</h3>
+        <p>Real-time fps, ETA, current frame, and a streaming ffmpeg log. Survives API restarts via exponential backoff.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">⚐</div>
+        <h3>Admin log stream</h3>
+        <p>Ring-buffered HTTP and business events with SSE streaming. Parses IP, method, path, and status inline.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">⌘</div>
+        <h3>Multilingual help</h3>
+        <p>English, Português, Español, Français, 中文, 日本語. The in-app manual ships in six languages.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────── HOW IT WORKS ───────── -->
+<section id="how" class="how">
+  <div class="container">
+    <div class="section-head">
+      <span class="eyebrow">How it works</span>
+      <h2>Three steps. That's the whole loop.</h2>
+    </div>
+
+    <div class="how-grid">
+      <div class="how-step">
+        <div class="how-num">01</div>
+        <h3>Scan</h3>
+        <p>Point at <code>/mnt/media</code> (or anywhere). Filter by size threshold. Files already in HEVC are skipped automatically.</p>
+      </div>
+      <div class="how-arrow">→</div>
+      <div class="how-step">
+        <div class="how-num">02</div>
+        <h3>Encode</h3>
+        <p>Worker pulls jobs from Postgres, runs ffmpeg with your chosen encoder/preset/CRF, and streams live progress over WebSocket.</p>
+      </div>
+      <div class="how-arrow">→</div>
+      <div class="how-step">
+        <div class="how-num">03</div>
+        <h3>Reclaim</h3>
+        <p>Original is replaced atomically; hash and metrics get persisted to history. You watch your free space go up.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────── SCREENSHOTS ───────── -->
+<section id="screens" class="screens">
+  <div class="container">
+    <div class="section-head">
+      <span class="eyebrow">The interface</span>
+      <h2>Built to be lived in.</h2>
+      <p>Six screens, each doing one thing well. No tabs-in-tabs, no buried settings, no five-second polling loops.</p>
+    </div>
+
+    <div class="tabs" role="tablist">
+      <button class="tab active" data-tab="dashboard" role="tab">Dashboard</button>
+      <button class="tab" data-tab="scan" role="tab">Scan</button>
+      <button class="tab" data-tab="encode" role="tab">Encode</button>
+      <button class="tab" data-tab="history" role="tab">History</button>
+      <button class="tab" data-tab="roadmap" role="tab">Roadmap</button>
+      <button class="tab" data-tab="logs" role="tab">Admin Logs</button>
+    </div>
+
+    <!-- Dashboard -->
+    <div class="window screen-pane active" data-pane="dashboard">
+      <div class="window-bar">
+        <span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span>
+        <div class="window-url">localhost:4246<span class="window-path">/dashboard</span></div>
+      </div>
+      <div class="window-body app big">
+        <aside class="app-sidebar">
+          <div class="app-brand"><div class="app-brand-mark">TT</div><span>Transcode Talker</span></div>
+          <div class="app-nav-item active">⬛ Dashboard</div>
+          <div class="app-nav-item">⌕ Scan</div>
+          <div class="app-nav-item">▶ Encode</div>
+          <div class="app-nav-item">⌃ History</div>
+          <div class="app-nav-item">⛯ Roadmap</div>
+          <div class="app-nav-item">⚙ Settings</div>
+        </aside>
+        <main class="app-main">
+          <div class="app-header"><h3>Dashboard</h3><span class="chip">live</span></div>
+          <div class="kpi-grid four">
+            <div class="kpi"><div class="kpi-label">Total Encoded</div><div class="kpi-value">922</div><div class="kpi-trend up">+18 this week</div></div>
+            <div class="kpi"><div class="kpi-label">Space Saved</div><div class="kpi-value">181<small>GB</small></div><div class="kpi-trend up">34.2% avg</div></div>
+            <div class="kpi"><div class="kpi-label">Active Queue</div><div class="kpi-value">3</div><div class="kpi-trend">running</div></div>
+            <div class="kpi"><div class="kpi-label">Success Rate</div><div class="kpi-value">98.7<small>%</small></div><div class="kpi-trend up">stable</div></div>
+          </div>
+          <div class="dual-cards">
+            <div class="card">
+              <h4>Now encoding</h4>
+              <div class="progress-card flat">
+                <div class="progress-head"><span>Baka and Test S00E09.mkv</span><span>62%</span></div>
+                <div class="progress"><div class="progress-bar" style="width:62%"></div></div>
+                <div class="progress-meta">VAAPI · CRF 26 · 334 fps · ETA 2m 04s</div>
+              </div>
+            </div>
+            <div class="card">
+              <h4>Recent activity</h4>
+              <ul class="activity">
+                <li><span class="dot-green"></span>Movie.S01E02.mkv · saved 412 MB</li>
+                <li><span class="dot-green"></span>Show.Episode.mkv · saved 287 MB</li>
+                <li><span class="dot-green"></span>Anime.E04.mkv · saved 633 MB</li>
+                <li><span class="dot-yellow"></span>Big.Buck.Bunny.mkv · retried 1×</li>
+              </ul>
+            </div>
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <!-- Scan -->
+    <div class="window screen-pane" data-pane="scan">
+      <div class="window-bar">
+        <span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span>
+        <div class="window-url">localhost:4246<span class="window-path">/scan</span></div>
+      </div>
+      <div class="window-body app big">
+        <aside class="app-sidebar">
+          <div class="app-brand"><div class="app-brand-mark">TT</div><span>Transcode Talker</span></div>
+          <div class="app-nav-item">⬛ Dashboard</div>
+          <div class="app-nav-item active">⌕ Scan</div>
+          <div class="app-nav-item">▶ Encode</div>
+          <div class="app-nav-item">⌃ History</div>
+          <div class="app-nav-item">⛯ Roadmap</div>
+          <div class="app-nav-item">⚙ Settings</div>
+        </aside>
+        <main class="app-main">
+          <div class="app-header"><h3>Scan &amp; Select</h3><button class="btn-tiny primary">▶ Encode 3 selected</button></div>
+          <div class="toolbar">
+            <span class="chip">/mnt/animes</span>
+            <span class="chip">/mnt/media</span>
+            <button class="btn-tiny">Re-scan</button>
+            <span class="muted right">126 candidates · 47 GB total</span>
+          </div>
+          <table class="data-table">
+            <thead><tr><th></th><th>File</th><th>Size</th><th>Codec</th><th></th></tr></thead>
+            <tbody>
+              <tr class="selected"><td><input type="checkbox" checked></td><td>Movies/Inception.mkv</td><td>4.2 GB</td><td><span class="badge">x264</span></td><td><button class="btn-tiny ghost">ignore</button></td></tr>
+              <tr class="selected"><td><input type="checkbox" checked></td><td>Animes/Baka and Test S00E09.mkv</td><td>1.2 GB</td><td><span class="badge">x264</span></td><td><button class="btn-tiny ghost">ignore</button></td></tr>
+              <tr class="selected"><td><input type="checkbox" checked></td><td>Shows/Office S03E18.mkv</td><td>2.8 GB</td><td><span class="badge">x264</span></td><td><button class="btn-tiny ghost">ignore</button></td></tr>
+              <tr><td><input type="checkbox"></td><td>Movies/Interstellar.mkv</td><td>8.1 GB</td><td><span class="badge">x264</span></td><td><button class="btn-tiny ghost">ignore</button></td></tr>
+              <tr><td><input type="checkbox"></td><td>Animes/Bleach S01E20.mkv</td><td>980 MB</td><td><span class="badge">x264</span></td><td><button class="btn-tiny ghost">ignore</button></td></tr>
+            </tbody>
+          </table>
+        </main>
+      </div>
+    </div>
+
+    <!-- Encode -->
+    <div class="window screen-pane" data-pane="encode">
+      <div class="window-bar">
+        <span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span>
+        <div class="window-url">localhost:4246<span class="window-path">/encode</span></div>
+      </div>
+      <div class="window-body app big">
+        <aside class="app-sidebar">
+          <div class="app-brand"><div class="app-brand-mark">TT</div><span>Transcode Talker</span></div>
+          <div class="app-nav-item">⬛ Dashboard</div>
+          <div class="app-nav-item">⌕ Scan</div>
+          <div class="app-nav-item active">▶ Encode</div>
+          <div class="app-nav-item">⌃ History</div>
+          <div class="app-nav-item">⛯ Roadmap</div>
+          <div class="app-nav-item">⚙ Settings</div>
+        </aside>
+        <main class="app-main">
+          <div class="app-header"><h3>Encode Queue</h3><span class="chip live">● live</span></div>
+          <div class="queue-item active">
+            <div class="queue-row">
+              <span class="status-pill running">running</span>
+              <span class="queue-name">Baka and Test S00E09.mkv</span>
+              <span class="queue-meta">62% · 334 fps · ETA 2m 04s</span>
+              <button class="x-btn" aria-label="Cancel">✕</button>
+            </div>
+            <div class="progress"><div class="progress-bar" style="width:62%"></div></div>
+          </div>
+          <div class="queue-item">
+            <div class="queue-row">
+              <span class="status-pill queued">queued</span>
+              <span class="queue-name">Inception.mkv</span>
+              <span class="queue-meta">4.2 GB · waiting</span>
+              <button class="x-btn" aria-label="Remove">✕</button>
+            </div>
+          </div>
+          <div class="queue-item">
+            <div class="queue-row">
+              <span class="status-pill queued">queued</span>
+              <span class="queue-name">Office S03E18.mkv</span>
+              <span class="queue-meta">2.8 GB · waiting</span>
+              <button class="x-btn" aria-label="Remove">✕</button>
+            </div>
+          </div>
+
+          <div class="card mt log">
+            <div class="card-head"><h4>Live log</h4><button class="btn-tiny ghost">Clear</button></div>
+            <pre class="logbox"><code>[22:48:34] ffmpeg -hwaccel vaapi -i input.mkv ...
+[22:48:35] vaapi: AMD Renoir initialized (renderD128)
+[22:48:36] frame=  2508 fps=334 q=-0.0 size=  142336kB time=00:01:44.65
+[22:48:37] frame=  2841 fps=334 q=-0.0 size=  158204kB time=00:01:58.51
+[22:48:38] frame=  3175 fps=334 q=-0.0 size=  175020kB time=00:02:12.36</code></pre>
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <!-- History -->
+    <div class="window screen-pane" data-pane="history">
+      <div class="window-bar">
+        <span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span>
+        <div class="window-url">localhost:4246<span class="window-path">/history</span></div>
+      </div>
+      <div class="window-body app big">
+        <aside class="app-sidebar">
+          <div class="app-brand"><div class="app-brand-mark">TT</div><span>Transcode Talker</span></div>
+          <div class="app-nav-item">⬛ Dashboard</div>
+          <div class="app-nav-item">⌕ Scan</div>
+          <div class="app-nav-item">▶ Encode</div>
+          <div class="app-nav-item active">⌃ History</div>
+          <div class="app-nav-item">⛯ Roadmap</div>
+          <div class="app-nav-item">⚙ Settings</div>
+        </aside>
+        <main class="app-main">
+          <div class="app-header"><h3>History</h3><div class="row-gap"><button class="btn-tiny ghost">Export JSON</button><button class="btn-tiny ghost">Import</button></div></div>
+          <div class="toolbar">
+            <input type="text" class="search" placeholder="Search filename…" />
+            <span class="chip">status: all</span>
+            <span class="chip">encoder: vaapi</span>
+            <span class="muted right">922 records · 181 GB saved</span>
+          </div>
+          <table class="data-table">
+            <thead><tr><th>Filename</th><th>Original</th><th>Final</th><th>Saved</th><th>Encoder</th><th>Status</th></tr></thead>
+            <tbody>
+              <tr><td>Baka and Test S00E09.mkv</td><td>1.18 GB</td><td>..</td><td>..</td><td><span class="badge">vaapi</span></td><td><span class="status-pill warn">interrupted</span></td></tr>
+              <tr><td>Movie Inception.mkv</td><td>8.13 GB</td><td>5.21 GB</td><td><b>2.92 GB</b></td><td><span class="badge">vaapi</span></td><td><span class="status-pill ok">completed</span></td></tr>
+              <tr><td>Office S03E18.mkv</td><td>2.81 GB</td><td>1.87 GB</td><td><b>0.94 GB</b></td><td><span class="badge">vaapi</span></td><td><span class="status-pill ok">completed</span></td></tr>
+              <tr><td>Anime E04.mkv</td><td>1.49 GB</td><td>0.86 GB</td><td><b>0.63 GB</b></td><td><span class="badge">vaapi</span></td><td><span class="status-pill ok">completed</span></td></tr>
+              <tr><td>Bleach S01E20.mkv</td><td>0.98 GB</td><td>0.57 GB</td><td><b>0.41 GB</b></td><td><span class="badge">vaapi</span></td><td><span class="status-pill ok">completed</span></td></tr>
+            </tbody>
+          </table>
+        </main>
+      </div>
+    </div>
+
+    <!-- Roadmap -->
+    <div class="window screen-pane" data-pane="roadmap">
+      <div class="window-bar">
+        <span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span>
+        <div class="window-url">localhost:4246<span class="window-path">/roadmap</span></div>
+      </div>
+      <div class="window-body app big">
+        <aside class="app-sidebar">
+          <div class="app-brand"><div class="app-brand-mark">TT</div><span>Transcode Talker</span></div>
+          <div class="app-nav-item">⬛ Dashboard</div>
+          <div class="app-nav-item">⌕ Scan</div>
+          <div class="app-nav-item">▶ Encode</div>
+          <div class="app-nav-item">⌃ History</div>
+          <div class="app-nav-item active">⛯ Roadmap</div>
+          <div class="app-nav-item">⚙ Settings</div>
+        </aside>
+        <main class="app-main">
+          <div class="app-header"><h3>Roadmap</h3><span class="muted">YAML-driven · live reload</span></div>
+          <div class="toolbar">
+            <span class="chip">severity: all</span>
+            <span class="chip">priority: all</span>
+            <span class="chip">version: 0.3.5.2</span>
+          </div>
+          <div class="roadmap-grid">
+            <div class="card">
+              <h4>🐞 Bugs · 3 open</h4>
+              <div class="rm-item"><span class="rm-id">B-103</span> WebSocket reconnect doesn't surface a disconnected state <span class="badge low">Low</span></div>
+              <div class="rm-item"><span class="rm-id">B-104</span> Storage page silently fails on hosts without /mnt/hdd <span class="badge med">Med</span></div>
+              <div class="rm-item"><span class="rm-id">B-105</span> Folder picker doesn't refresh on parent change <span class="badge low">Low</span></div>
+            </div>
+            <div class="card">
+              <h4>✦ Improvements · 0 open</h4>
+              <div class="rm-item muted"><span class="rm-id">I-201</span> Full UI rewrite (React + Vite + Tailwind) <span class="badge done">done</span></div>
+              <div class="rm-item muted"><span class="rm-id">I-202</span> Roadmap surface in the UI <span class="badge done">done</span></div>
+            </div>
+            <div class="card">
+              <h4>★ Features · 5 planned</h4>
+              <div class="rm-item"><span class="rm-id">F-301</span> Encode preset profiles (saveable) <span class="badge high">High</span></div>
+              <div class="rm-item"><span class="rm-id">F-302</span> Scheduled scans (cron-style) <span class="badge med">Med</span></div>
+              <div class="rm-item"><span class="rm-id">F-303</span> Webhook on completion <span class="badge low">Low</span></div>
+            </div>
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <!-- Admin Logs -->
+    <div class="window screen-pane" data-pane="logs">
+      <div class="window-bar">
+        <span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span>
+        <div class="window-url">localhost:4246<span class="window-path">/settings/admin-logs</span></div>
+      </div>
+      <div class="window-body app big">
+        <aside class="app-sidebar">
+          <div class="app-brand"><div class="app-brand-mark">TT</div><span>Transcode Talker</span></div>
+          <div class="app-nav-item">⬛ Dashboard</div>
+          <div class="app-nav-item">⌕ Scan</div>
+          <div class="app-nav-item">▶ Encode</div>
+          <div class="app-nav-item">⌃ History</div>
+          <div class="app-nav-item">⛯ Roadmap</div>
+          <div class="app-nav-item open">⚙ Settings
+            <div class="app-nav-sub active">Admin Logs</div>
+          </div>
+        </aside>
+        <main class="app-main">
+          <div class="app-header"><h3>Admin Logs</h3><span class="chip live">● live</span></div>
+          <div class="logblock">
+            <div class="logblock-head"><span class="log-level info">INFO</span><span class="log-time">22:48:34</span><span class="log-logger">uvicorn.access</span></div>
+            <div class="log-fields">
+              <div><b>IP</b> 192.0.2.41</div>
+              <div><b>HTTP Method</b> GET</div>
+              <div><b>Path</b> /api/health</div>
+              <div><b>HTTP Response</b> 200</div>
+            </div>
+          </div>
+          <div class="logblock">
+            <div class="logblock-head"><span class="log-level info">INFO</span><span class="log-time">22:48:36</span><span class="log-logger">reencoder.api</span></div>
+            <div class="log-fields">
+              <div><b>Event</b> encode.start</div>
+              <div><b>Job ID</b> 7384</div>
+              <div><b>File</b> Baka and Test S00E09.mkv</div>
+              <div><b>Encoder</b> vaapi</div>
+            </div>
+          </div>
+          <div class="logblock">
+            <div class="logblock-head"><span class="log-level warn">WARN</span><span class="log-time">22:48:41</span><span class="log-logger">reencoder.worker</span></div>
+            <div class="log-fields">
+              <div><b>Event</b> encode.interrupted</div>
+              <div><b>Job ID</b> 7384</div>
+              <div><b>Reason</b> Interrupted by user</div>
+            </div>
+          </div>
+        </main>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ───────── STACK ───────── -->
+<section id="stack" class="stack">
+  <div class="container">
+    <div class="section-head">
+      <span class="eyebrow">Architecture</span>
+      <h2>Four containers, sharp boundaries. Same stack, one docker-compose.</h2>
+      <p>Each service does one job. Talk over the docker network; the host only sees port 4246.</p>
+    </div>
+
+    <div class="stack-grid">
+      <div class="stack-card">
+        <div class="stack-icon">▣</div>
+        <h3>reencoder-web</h3>
+        <p class="stack-img">nginx:1.27-alpine</p>
+        <p>Serves the Vite SPA bundle and reverse-proxies <code>/api/*</code> and <code>/ws</code> to the API.</p>
+        <span class="port">4246 → 80</span>
+      </div>
+      <div class="stack-card">
+        <div class="stack-icon">▤</div>
+        <h3>reencoder-api</h3>
+        <p class="stack-img">FastAPI · Python 3.12</p>
+        <p>REST + WebSocket + SSE. Owns scans, queue mutations, history, config, and the live event bus.</p>
+        <span class="port">4246/tcp internal</span>
+      </div>
+      <div class="stack-card">
+        <div class="stack-icon">▶</div>
+        <h3>reencoder-worker</h3>
+        <p class="stack-img">FFmpeg · Python 3.12</p>
+        <p>Pulls jobs from Postgres, spawns ffmpeg with hardware accel, streams progress. 8 CPU / 8 GB cap.</p>
+        <span class="port">no public port</span>
+      </div>
+      <div class="stack-card">
+        <div class="stack-icon">▦</div>
+        <h3>postgres</h3>
+        <p class="stack-img">postgres:16-alpine</p>
+        <p>Metastore for sessions, jobs, history, scan results. Switch to SQLite with <code>DB_BACKEND=sqlite</code>.</p>
+        <span class="port">5432 internal</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────── INSTALL ───────── -->
+<section id="install" class="install">
+  <div class="container install-grid">
+    <div>
+      <span class="eyebrow">Install</span>
+      <h2>One command. Four containers up.</h2>
+      <p>Compose ships sane defaults, no <code>.env</code> required for a local boot. Postgres is the production default; SQLite stays one env var away.</p>
+      <ul class="check-list">
+        <li>✓ Linux host with Docker &amp; Docker Compose</li>
+        <li>✓ Optional: <code>/dev/dri</code> mapped for VAAPI/QSV acceleration</li>
+        <li>✓ ~6 GB free for the Postgres volume + first build cache</li>
+      </ul>
+    </div>
+    <pre class="code"><code><span class="c-comment"># 1. Clone &amp; enter</span>
+git clone https://github.com/&lt;you&gt;/reencoder-v3.git
+cd reencoder-v3
+
+<span class="c-comment"># 2. Build &amp; up (4 containers)</span>
+docker compose build
+docker compose up -d
+
+<span class="c-comment"># 3. Verify</span>
+docker compose ps
+<span class="c-out">NAME                STATUS              PORTS</span>
+<span class="c-out">reencoder-postgres  Up (healthy)        5432/tcp</span>
+<span class="c-out">reencoder-api       Up (healthy)        4246/tcp</span>
+<span class="c-out">reencoder-worker    Up (healthy)</span>
+<span class="c-out">reencoder-web       Up (healthy)        0.0.0.0:4246-&gt;80/tcp</span>
+
+<span class="c-comment"># 4. Open the UI</span>
+open http://localhost:4246</code></pre>
+  </div>
+</section>
+
+<!-- ───────── ADVANTAGES ───────── -->
+<section class="why">
+  <div class="container">
+    <div class="section-head">
+      <span class="eyebrow">Why this exists</span>
+      <h2>HandBrake is great, until you have 5,000 files.</h2>
+    </div>
+    <div class="why-grid">
+      <div class="why-card up">
+        <h3>vs. manual HandBrake</h3>
+        <ul>
+          <li>✓ Walks your library automatically</li>
+          <li>✓ Skips files already in HEVC</li>
+          <li>✓ Persists history; never re-encodes the same file twice</li>
+          <li>✓ Resumes after crashes via heartbeat</li>
+        </ul>
+      </div>
+      <div class="why-card up">
+        <h3>vs. cloud services</h3>
+        <ul>
+          <li>✓ Your media never leaves your home network</li>
+          <li>✓ Uses the GPU you already own</li>
+          <li>✓ Zero per-minute fees</li>
+          <li>✓ Works offline</li>
+        </ul>
+      </div>
+      <div class="why-card up">
+        <h3>vs. bash scripts</h3>
+        <ul>
+          <li>✓ Real UI with queue, history, search, filters</li>
+          <li>✓ Audit trail with hashes per file</li>
+          <li>✓ WebSocket live progress, not <code>tail -f</code></li>
+          <li>✓ Multi-encoder fallback when hardware breaks</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────── FOOTER ───────── -->
+<footer class="footer">
+  <div class="container footer-bottom">
+    <span>© 2026 · Reencoder-v3 · MIT · Built with FastAPI, React &amp; ffmpeg.</span>
+  </div>
+</footer>
+
+<script src="script.js"></script>
+</body>
+</html>
