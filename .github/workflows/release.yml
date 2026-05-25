@@ -1,0 +1,88 @@
+name: Release Docker Images
+
+# Builds and pushes the 3 service images to GitHub Container Registry (ghcr.io)
+# whenever a version tag is pushed.
+#
+# Tag format: v<MAJOR>.<MINOR>.<PATCH>.<HOTFIX>  e.g.  v0.3.5.2
+#
+# Images published:
+#   ghcr.io/<owner>/reencoder-api:<version>     + :latest
+#   ghcr.io/<owner>/reencoder-worker:<version>  + :latest
+#   ghcr.io/<owner>/reencoder-web:<version>     + :latest
+#
+# Users then run the stack via docker-compose.prod.yml without cloning the repo.
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+      - 'v*.*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Override tag (defaults to commit sha-7)'
+        required: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: reencoder-api
+            context: ./reencoder-api
+          - service: reencoder-worker
+            context: ./reencoder-worker
+          - service: reencoder-web
+            context: ./frontend
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Lowercase repo owner
+        id: owner
+        run: echo "lc=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve version tag
+        id: meta
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          elif [[ -n "${{ inputs.tag }}" ]]; then
+            VERSION="${{ inputs.tag }}"
+          else
+            VERSION="sha-${GITHUB_SHA::7}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push ${{ matrix.service }}
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.context }}
+          push: true
+          platforms: linux/amd64
+          tags: |
+            ghcr.io/${{ steps.owner.outputs.lc }}/${{ matrix.service }}:${{ steps.meta.outputs.version }}
+            ghcr.io/${{ steps.owner.outputs.lc }}/${{ matrix.service }}:latest
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,scope=${{ matrix.service }},mode=max
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}

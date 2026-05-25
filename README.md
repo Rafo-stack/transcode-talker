@@ -1,128 +1,125 @@
-# Reencoder-v3
+# Transcode Talker
 
-**Porta:** 4246 (API + UI)
-**Imagens:** local build (`./reencoder-api`, `./reencoder-worker`)
-**Rede:** `reencoder-net` *(isolada — não está em `media-network`)*
-**UID/GID:** root (ver [seção UID/GID](#uidgid-e-permissões))
+> Self-hosted HEVC re-encoding pipeline. Reclaim disk space from your media library, automatically.
 
-> Documentação técnica completa em [`Documentacao/01 - Reencoder - Documentacao.md`](../Documentacao/01%20-%20Reencoder%20-%20Documentacao.md).
+[![License: MIT](https://img.shields.io/badge/License-MIT-teal.svg)](LICENSE)
+[![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)](https://docs.docker.com/compose/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
+[![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)](https://react.dev)
 
-## Propósito
+Transcode Talker scans your media library, queues oversized files, and re-encodes them to HEVC with hardware acceleration. Original files get replaced atomically. Every encode is recorded so you never re-process the same file twice.
 
-Re-encode automatizado dos arquivos grandes da biblioteca para HEVC, reduzindo espaço em disco mantendo qualidade aceitável. Compõe um **api** (FastAPI/UI) e um **worker** (faz o encode via FFmpeg, CPU ou VAAPI AMD).
+---
 
-## Serviços
-
-| Serviço | Função | Healthcheck |
-|---|---|---|
-| `reencoder-api` | UI web + API REST | `GET /api/health` |
-| `reencoder-worker` | Loop de processamento de jobs | heartbeat em `/data/.worker_heartbeat` (refresh < 30s) |
-
-## Integrações
-
-- **Consome:** filesystem (`/mnt/media`, `/mnt/animes`, `/mnt/hdd`), GPU AMD (`/dev/dri/renderD128`)
-- **Consumido por:** humano via UI (`http://<host>:4246`)
-- **Não integra** com \*arr (rede separada — B-008 / Won't Do)
-
-## Volumes mapeados
-
-| Container | Host | Propósito |
-|---|---|---|
-| `/data` | `~/docker/reencoder-v3/data` | DB SQLite + configs + logs |
-| `/mnt/media` | `/mnt/media` | Origem/destino de re-encode |
-| `/mnt/animes` | `/mnt/animes` | Idem |
-| `/mnt/hdd` | `/mnt/hdd` | Storage temp (HDD lenta dedicada) |
-| `/dev/dri` (worker) | `/dev/dri` | VAAPI render node |
-
-## Configuração inicial
-
-1. `cd reencoder-v3 && docker compose up -d` — build automático na primeira vez
-2. UI em `http://<host>:4246`
-3. Configurar:
-   - **Scan folders** — diretórios a varrer
-   - **Min file size** — threshold para considerar candidato
-   - **Preset / CRF** — qualidade do encode
-   - **Use VAAPI** — ligar se hardware AMD disponível
-4. (Opcional) Habilitar BASIC_AUTH:
-   ```bash
-   export BASIC_AUTH_USER=admin
-   export BASIC_AUTH_PASS='senha-forte'
-   docker compose up -d
-   ```
-
-## UID/GID e Permissões
-
-> Cobre B-020 e M-018.
-
-**Problema:** o reencoder roda como **root** dentro do container (não usa PUID/PGID), enquanto os demais serviços da stack rodam como `1000:1000`. Arquivos re-encodados que voltam para a biblioteca podem ficar com `owner: root` em vez de `rafael`.
-
-**Por que não foi corrigido:**
-
-- VAAPI exige que o processo tenha permissão de acessar `/dev/dri/renderD128`, que pertence aos grupos `render` e/ou `video` no host. Mudar para `user: 1000:1000` sem ajustar `group_add` quebra a aceleração GPU.
-- Os GIDs de `render`/`video` variam por host (Ubuntu 22.04 != Debian 12 != Arch). Precisam ser descobertos no servidor real, não na documentação.
-
-**Como corrigir no futuro (se quiser):**
+## Quick start
 
 ```bash
-# 1. Descobrir GIDs no host:
-getent group render video
-# Exemplo de output:
-# render:x:993:rafael
-# video:x:39:rafael
-
-# 2. Aplicar no docker-compose.yml do reencoder-worker:
-#    user: "1000:1000"
-#    group_add:
-#      - "993"   # render
-#      - "39"    # video
-
-# 3. Re-criar dirs do reencoder com owner correto:
-sudo chown -R 1000:1000 ~/docker/reencoder-v3/data
-
-# 4. Restart e verificar VAAPI:
-docker compose down && docker compose up -d
-docker exec reencoder-worker vainfo
+mkdir reencoder && cd reencoder
+curl -O https://raw.githubusercontent.com/Rafo-stack/transcode-talker/main/docker-compose.prod.yml
+docker compose -f docker-compose.prod.yml up -d
 ```
 
-**Sintoma de que o problema está ativo:**
+Open `http://<host>:4246/` in your browser, point it at your media folders under **Settings → Scan folders**, and start encoding.
+
+> Production compose pulls pre-built images from GitHub Container Registry. To build from source instead, clone the repo and use the regular `docker-compose.yml`.
+
+---
+
+## What it does
+
+- **Walks your media folders** and finds files above a configurable size threshold
+- **Skips files already in HEVC** so it never wastes a pass
+- **Re-encodes with hardware acceleration**: VAAPI (AMD/Intel), QSV (Intel), NVENC (NVIDIA), or libx265 CPU fallback
+- **Replaces originals atomically** once the encode succeeds and the hash is recorded
+- **Persists everything** in PostgreSQL (or SQLite if you prefer), with full searchable history
+- **Streams live progress** over WebSocket: current frame, fps, ETA, ffmpeg log
+- **Survives restarts** via a heartbeat file, exponential-backoff reconnect, and a backup taken at startup
+
+## Stack
+
+Four Docker containers, one network, one published port:
+
+| Service | Image | Purpose |
+|---------|-------|---------|
+| `reencoder-web` | nginx 1.27 + Vite SPA bundle | Serves the UI and reverse-proxies `/api/*` and `/ws` |
+| `reencoder-api` | FastAPI on Python 3.12 | REST, WebSocket, SSE event bus |
+| `reencoder-worker` | FFmpeg + Python 3.12 | Pulls jobs and runs the encoder |
+| `postgres` | postgres:16-alpine | Metastore (sessions, jobs, history, scan results) |
+
+Frontend: React 18 + TypeScript + Vite 6 + Tailwind 3 + TanStack Query + Zustand.
+
+## Configuration
+
+### Environment variables
+
+Copy `.env.example` to `.env` and adjust before the first boot. The most important ones:
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `POSTGRES_PASSWORD` | `reencoder` | **Change this before exposing the app.** Only applied on first volume init. |
+| `DB_BACKEND` | `postgres` | Set to `sqlite` for single-user setups. |
+| `TZ` | `America/New_York` | Container timezone. |
+| `BASIC_AUTH_USER` / `BASIC_AUTH_PASS` | (empty) | Set both to enable HTTP Basic auth on every endpoint except `/api/health`. |
+
+> **Postgres password rotation gotcha:** Postgres only writes `POSTGRES_PASSWORD` on the first boot of a fresh volume. To change it later, either wipe `./data/postgres/` (loses history, back up first) or run `ALTER USER reencoder WITH PASSWORD '<new>'` inside the container.
+
+### Required host paths
+
+Mount the folders you want to scan/encode into the worker (edit `docker-compose.prod.yml` to match your layout):
+
+- `/mnt/media`, `/mnt/animes`, etc. — your media library
+- `/mnt/hdd` — temp space for the encoder (a slower disk is fine)
+- `/dev/dri` — optional, only required for VAAPI/QSV hardware acceleration
+
+## Hardware acceleration
+
+The worker auto-detects and uses the first available encoder, in this order:
+
+1. **VAAPI** (AMD/Intel): mount `/dev/dri:/dev/dri` and the container will use it
+2. **QSV** (Intel Quick Sync): same `/dev/dri` mount, different code path
+3. **NVENC** (NVIDIA): requires the `nvidia` runtime
+4. **libx265** (CPU): always available as fallback
+
+You can also force a specific encoder under **Settings → Encoding**.
+
+## Build from source
+
+If you'd rather build locally instead of pulling images:
 
 ```bash
-ls -la /mnt/media/Movies/<algum-encoded>/
-# Se mostrar "root root" em vez de "rafael rafael" → reencoder está como root.
+git clone https://github.com/Rafo-stack/transcode-talker.git
+cd transcode-talker
+docker compose build
+docker compose up -d
+docker compose ps
 ```
 
-**Workaround temporário (se não quiser mudar o user):**
+The first build takes about 30 seconds (Vite bundle + Python deps + nginx layer).
+
+## Development
 
 ```bash
-# Cron semanal que reativa permissões corretas
-0 4 * * 0 chown -R 1000:1000 /mnt/media /mnt/animes
+# Frontend (hot-reload at http://localhost:5173, proxies /api → :4246)
+cd frontend
+npm install
+npm run dev
+
+# Backend
+cd reencoder-api
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 4246
+
+# Run the test suite
+pip install -r requirements-dev.txt
+pytest -v tests/
 ```
 
-## Gotchas
+The frontend dev server expects the API at `http://localhost:4246`. The Vite config rewrites `/api/*` and `/ws` to it automatically.
 
-- Path absoluto no compose (`~/docker/reencoder-v3/data`) — não portável (B-009 / Won't Do).
-- TZ default agora é `America/Sao_Paulo` (T-01 desta sessão — antes era `America/New_York`).
-- Healthcheck do worker depende do arquivo `/data/.worker_heartbeat` — se você apagar `/data/` o worker fica `unhealthy` até completar uma iteração.
-- VAAPI: se `/dev/dri/renderD128` não existir ou sem permissão, encode cai para libx265 CPU (mais lento, ainda funciona).
+## License
 
-## Comandos rápidos
+[MIT](LICENSE). Use it, fork it, ship it.
 
-```bash
-cd reencoder-v3 && docker compose up -d
+## Acknowledgements
 
-# Health
-curl -fsS http://localhost:4246/api/health && echo OK
-
-# Worker heartbeat
-ls -la ~/docker/reencoder-v3/data/.worker_heartbeat
-
-# Logs
-docker logs -f reencoder-api
-docker logs -f reencoder-worker
-
-# Verificar VAAPI
-docker exec reencoder-worker vainfo
-
-# Restart só do worker
-cd reencoder-v3 && docker compose restart reencoder-worker
-```
+Built on top of [FFmpeg](https://ffmpeg.org/), [FastAPI](https://fastapi.tiangolo.com/), [React](https://react.dev/), and [PostgreSQL](https://www.postgresql.org/). Hardware encoders courtesy of AMD VAAPI, Intel QSV, and NVIDIA NVENC.

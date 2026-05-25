@@ -20,9 +20,8 @@ if (navToggle && navLinks) {
   })
 }
 
-// ───────── GitHub link placeholder ─────────
-// Replace these once the repo is published.
-const GITHUB_URL = 'https://github.com/#'
+// ───────── GitHub link ─────────
+const GITHUB_URL = 'https://github.com/Rafo-stack/transcode-talker'
 document.querySelectorAll('#githubLink, #githubLink2').forEach(a => {
   a.href = GITHUB_URL
   a.target = '_blank'
