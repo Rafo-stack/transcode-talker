@@ -1,66 +1,118 @@
+# ═══════════════════════════════════════════════════════════════════
+# Reencoder-v3 — development compose file
+#
+# Builds all images locally from the source in this repo. Use this if
+# you're hacking on the code. For a production deploy that pulls
+# pre-built images from ghcr.io, use docker-compose.prod.yml instead.
+#
+# Stack:
+#   postgres          metastore (DB, history, sessions)
+#   reencoder-api     FastAPI backend (REST + WebSocket + SSE)
+#   reencoder-worker  encoder loop (ffmpeg + hardware accel)
+#   reencoder-web     nginx serving the Vite SPA + reverse-proxying /api and /ws
+#
+# Boot:
+#   docker compose build && docker compose up -d
+#   docker compose ps     # verify all 4 healthy
+#   open http://localhost:4246/
+# ═══════════════════════════════════════════════════════════════════
+
 services:
 
-  # v3.4: Postgres is the production default. Subindo com
-  #   docker compose build && docker compose up -d
-  # você já recebe Postgres. Não precisa mais de --profile.
-  # SQLite continua suportado via DB_BACKEND=sqlite (sem postgres service).
+  # ───────────────────────────────────────────────────────────────
+  # postgres — metastore.
+  # CRITICAL: holds all history, sessions, jobs, scan results.
+  # If you nuke this volume, you lose everything except the .json
+  # backups in ./data/backups/.
+  # ───────────────────────────────────────────────────────────────
   postgres:
-    image: postgres:16-alpine
-    container_name: reencoder-postgres
-    restart: unless-stopped
+    image: postgres:16-alpine                         # pinned major version; alpine = small image
+    container_name: reencoder-postgres                # fixed name so other containers can address it as `postgres`
+    restart: unless-stopped                           # restart on crash, but not after you `docker compose down`
     environment:
+      # Postgres uses these only on the FIRST boot of a fresh volume.
+      # If you change POSTGRES_PASSWORD later, you must rotate it via
+      # `ALTER USER reencoder WITH PASSWORD '<new>'` inside the DB,
+      # otherwise the API will fail with "password authentication failed".
       POSTGRES_USER:     ${POSTGRES_USER:-reencoder}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-reencoder}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-reencoder}   # CHANGE this in any non-local deploy!
       POSTGRES_DB:       ${POSTGRES_DB:-reencoder}
     volumes:
+      # CRITICAL — DB files. Remove this mount and Postgres becomes ephemeral.
       - ./data/postgres:/var/lib/postgresql/data
     healthcheck:
+      # `pg_isready` returns 0 once Postgres accepts connections. The escaped
+      # `$$` is needed because compose itself interpolates single-$ variables.
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-reencoder} -d $${POSTGRES_DB:-reencoder}"]
       interval: 5s
       timeout: 5s
       retries: 10
-      start_period: 10s
+      start_period: 10s                               # first boot can take a moment to init the volume
     networks:
       - reencoder-net
 
+
+  # ───────────────────────────────────────────────────────────────
+  # reencoder-api — FastAPI backend.
+  # Not published on the host port directly; nginx (reencoder-web) is
+  # the public entry point and proxies /api and /ws here.
+  # ───────────────────────────────────────────────────────────────
   reencoder-api:
-    build: ./reencoder-api
+    build:
+      # Context is the repo root so the Dockerfile can also copy ./roadmap/
+      # into the image (used by /api/roadmap).
+      context: .
+      dockerfile: reencoder-api/Dockerfile
     container_name: reencoder-api
     restart: unless-stopped
-    # v3.5: no longer published on the host — the new reencoder-web nginx
-    # container is the public entry point and reverse-proxies /api/* and /ws
-    # to this service over the docker network.
     expose:
-      - "4246"
+      - "4246"                                        # internal-only port; reachable from other containers, not from host
     volumes:
+      # CRITICAL — shared app state with the worker (DB if SQLite, logs, config, backups).
       - ./data:/data
+      # DEV-ONLY mount: lets you edit roadmap YAMLs without rebuilding. The
+      # files are also baked into the image, so removing this mount is fine
+      # in production. ":ro" makes it read-only inside the container.
       - ./roadmap:/app/roadmap:ro
+      # CUSTOMIZE — your media folders. The API reads them for the scanner
+      # and the browse endpoint. Adjust paths to match your library.
+      # Remove a line if you don't have that mount point on the host.
       - /mnt/animes:/mnt/animes
       - /mnt/media:/mnt/media
+      # CRITICAL for the encoder (worker also uses it). Slow temp disk that
+      # ffmpeg writes intermediate files to. Without this mount, encoding
+      # falls back to writing temp files on the main disk (slower, less safe).
       - /mnt/hdd:/mnt/hdd
     environment:
-      - PYTHONUNBUFFERED=1
-      - TZ=${TZ:-America/New_York}
-      # M-003: set both to enable HTTP Basic auth on every endpoint except /api/health.
+      - PYTHONUNBUFFERED=1                            # forces print()/logs to flush in real time (so `docker logs -f` works)
+      - TZ=${TZ:-America/New_York}                    # IANA timezone for log timestamps
+      # Optional HTTP Basic auth on every endpoint except /api/health.
+      # Set BOTH variables in your .env to enable. Leave empty to disable.
       - BASIC_AUTH_USER=${BASIC_AUTH_USER:-}
       - BASIC_AUTH_PASS=${BASIC_AUTH_PASS:-}
-      # v3.4: Postgres é o default. Para usar SQLite, defina DB_BACKEND=sqlite no .env.
+      # Database selection. Default `postgres`. Set to `sqlite` for a
+      # single-user setup with /data/reencoder.db (postgres service still
+      # starts but the app ignores it).
       - DB_BACKEND=${DB_BACKEND:-postgres}
-      - POSTGRES_HOST=${POSTGRES_HOST:-postgres}
+      - POSTGRES_HOST=${POSTGRES_HOST:-postgres}      # `postgres` is the service name above; resolved via docker DNS
       - POSTGRES_PORT=${POSTGRES_PORT:-5432}
       - POSTGRES_USER=${POSTGRES_USER:-reencoder}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-reencoder}
       - POSTGRES_DB=${POSTGRES_DB:-reencoder}
     depends_on:
       postgres:
-        condition: service_healthy
+        condition: service_healthy                    # wait for pg_isready before starting; avoids reconnect spam at boot
     healthcheck:
+      # Hits /api/health every 30s. Using urllib instead of curl so we don't
+      # need to install curl in the slim image.
       test: ["CMD-SHELL", "python3 -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:4246/api/health', timeout=3).status==200 else 1)\""]
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 20s
+      start_period: 20s                               # uvicorn + DB engine init can take 10–15s
     logging:
+      # Cap log file growth so `docker logs` doesn't fill the host disk over
+      # months of uptime. 10MB × 5 files = ~50MB ceiling per container.
       driver: json-file
       options:
         max-size: "10m"
@@ -68,20 +120,37 @@ services:
     networks:
       - reencoder-net
 
+
+  # ───────────────────────────────────────────────────────────────
+  # reencoder-worker — encoder loop.
+  # Polls the DB for queued jobs, runs ffmpeg, streams progress.
+  # Never published on any port; it pushes events through the DB.
+  # ───────────────────────────────────────────────────────────────
   reencoder-worker:
-    build: ./reencoder-worker
+    build: ./reencoder-worker                         # local context — worker has no shared paths with other services
     container_name: reencoder-worker
     restart: unless-stopped
     devices:
+      # Hardware acceleration. Maps the host's GPU render node into the
+      # container. Required for VAAPI (AMD/Intel) and QSV (Intel Quick Sync).
+      # REMOVE THIS LINE if you don't have a GPU — the encoder will fall
+      # back to libx265 (CPU), which still works but is much slower.
       - /dev/dri:/dev/dri
     volumes:
-      - ./data:/data
+      - ./data:/data                                  # CRITICAL — shared state with the API
+      # CUSTOMIZE — same media mounts as the API. The worker needs READ
+      # AND WRITE access here because it replaces the original file with
+      # the re-encoded one in place.
       - /mnt/animes:/mnt/animes
       - /mnt/media:/mnt/media
+      # CRITICAL — ffmpeg writes intermediate output here during encode.
+      # If removed, every encode falls back to using the main disk for
+      # temp files (much more disk wear, slower I/O).
       - /mnt/hdd:/mnt/hdd
     environment:
       - PYTHONUNBUFFERED=1
       - TZ=${TZ:-America/New_York}
+      # Same DB config as the API — both processes hit the same database.
       - DB_BACKEND=${DB_BACKEND:-postgres}
       - POSTGRES_HOST=${POSTGRES_HOST:-postgres}
       - POSTGRES_PORT=${POSTGRES_PORT:-5432}
@@ -92,7 +161,9 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      # M-005: worker writes a heartbeat file each iteration; check it's fresh.
+      # Worker writes /data/.worker_heartbeat at the top of every loop
+      # iteration. Healthy = file modified less than 30s ago. If the
+      # worker hangs or crashes silently, this check trips first.
       test: ["CMD-SHELL", "test -f /data/.worker_heartbeat && test $(( $(date +%s) - $(stat -c %Y /data/.worker_heartbeat) )) -lt 30"]
       interval: 30s
       timeout: 5s
@@ -106,23 +177,36 @@ services:
     networks:
       - reencoder-net
     deploy:
+      # Hard cap on resource usage. libx265 with `slow` preset on 4K
+      # content has been observed to use ~5GB RAM and saturate 8 cores.
+      # If you only encode 1080p, 4 CPU / 4GB is enough.
       resources:
         limits:
           cpus: "8"
-          memory: 8G   # M-012: preset slow + 4K libx265 can exceed 4G; doubled for safety.
+          memory: 8G
 
-  # v3.5: new SPA frontend. Production-built React bundle served by nginx,
-  # which also reverse-proxies /api/* and /ws to the FastAPI container.
+
+  # ───────────────────────────────────────────────────────────────
+  # reencoder-web — nginx + Vite SPA bundle.
+  # The single public entry point. Serves the static frontend and
+  # reverse-proxies /api/* and /ws to reencoder-api over the docker
+  # network. See frontend/nginx.conf for the proxy rules.
+  # ───────────────────────────────────────────────────────────────
   reencoder-web:
-    build: ./frontend
+    build: ./frontend                                 # multi-stage build: node:20 → nginx:1.27-alpine
     container_name: reencoder-web
     restart: unless-stopped
     ports:
+      # PUBLIC — this is the URL users open in their browser.
+      # Format is "host:container". Change the host side if you already
+      # use 4246 for something else: e.g. "8080:80" → http://host:8080/
       - "4246:80"
     depends_on:
       reencoder-api:
-        condition: service_started
+        condition: service_started                    # nginx can boot before the API is healthy; proxy retries are cheap
     healthcheck:
+      # Hits nginx itself (serves index.html). If nginx isn't up, the SPA
+      # is unreachable. Using wget because nginx:alpine ships busybox wget.
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ >/dev/null || exit 1"]
       interval: 30s
       timeout: 5s
@@ -131,6 +215,11 @@ services:
     networks:
       - reencoder-net
 
+
+# Single isolated bridge network. Each service is reachable from the
+# others by its service name (e.g. the API connects to `postgres:5432`).
+# Containers on the host's other networks can't see these unless you
+# explicitly attach them.
 networks:
   reencoder-net:
     driver: bridge

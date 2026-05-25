@@ -3,7 +3,7 @@
 The backend already supports ``limit``/``offset`` since M-008 (v3.1) and
 already returns ``total`` since M-024 (v3.2). These tests pin that
 contract — they break if a refactor ever drops ``total`` from the
-response, since the UI's "Página X de Y" computation would silently
+response, since the UI's "Page X of Y" computation would silently
 display the wrong count.
 """
 import json

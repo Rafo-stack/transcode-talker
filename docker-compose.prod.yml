@@ -1,25 +1,46 @@
-# Production compose file — pulls pre-built images from GitHub Container Registry.
-# Use this if you want to run the app without cloning the source.
+# ═══════════════════════════════════════════════════════════════════
+# Reencoder-v3 — production compose file.
 #
+# Pulls pre-built images from GitHub Container Registry (ghcr.io)
+# instead of building locally. Use this if you just want to RUN the
+# app, not develop on it.
+#
+# Quick start (no clone needed):
+#   mkdir reencoder && cd reencoder
 #   curl -O https://raw.githubusercontent.com/Rafo-stack/transcode-talker/main/docker-compose.prod.yml
 #   docker compose -f docker-compose.prod.yml up -d
+#   open http://localhost:4246/
 #
-# To pin a specific version, replace ":latest" below with ":0.3.5.1" (etc).
+# Image tags:
+#   `:latest`     — most recent stable release
+#   `:0.3.5.1`    — specific version (recommended for prod, immutable)
+#   `:0.3.5`      — latest patch within the 0.3.5 minor
 #
-# Required host paths (create them or change the volume mappings):
-#   /mnt/media   /mnt/animes   /mnt/hdd
+# To pin: replace ":latest" below with the version you want.
+# ═══════════════════════════════════════════════════════════════════
 
 services:
+
+  # ───────────────────────────────────────────────────────────────
+  # postgres — metastore.
+  # CRITICAL: holds all encode history, sessions, scan results.
+  # If you delete ./data/postgres/ you lose everything except the
+  # JSON backups in ./data/backups/.
+  # ───────────────────────────────────────────────────────────────
   postgres:
     image: postgres:16-alpine
     container_name: reencoder-postgres
     restart: unless-stopped
     environment:
+      # These are applied ONLY on the first boot of a fresh volume.
+      # CHANGE POSTGRES_PASSWORD before exposing the app to anyone.
+      # To rotate later: `docker compose exec postgres psql -U postgres
+      # -c "ALTER USER reencoder WITH PASSWORD '<new>';"` then restart api+worker.
       POSTGRES_USER:     ${POSTGRES_USER:-reencoder}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-reencoder}
       POSTGRES_DB:       ${POSTGRES_DB:-reencoder}
     volumes:
-      - ./data/postgres:/var/lib/postgresql/data
+      - ./data/postgres:/var/lib/postgresql/data      # CRITICAL — actual DB files
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-reencoder} -d $${POSTGRES_DB:-reencoder}"]
       interval: 5s
@@ -29,31 +50,52 @@ services:
     networks:
       - reencoder-net
 
+
+  # ───────────────────────────────────────────────────────────────
+  # reencoder-api — FastAPI backend.
+  # No host port published; nginx (reencoder-web) is the entry point
+  # and reverse-proxies /api and /ws here over the docker network.
+  # The roadmap YAML files are baked into the image, no mount needed.
+  # ───────────────────────────────────────────────────────────────
   reencoder-api:
-    image: ghcr.io/rafo-stack/reencoder-api:latest
+    image: ghcr.io/rafo-stack/reencoder-api:latest    # change `:latest` to a version tag to pin
     container_name: reencoder-api
     restart: unless-stopped
     expose:
-      - "4246"
+      - "4246"                                        # internal-only
     volumes:
-      - ./data:/data
+      - ./data:/data                                  # CRITICAL — shared state (config, logs, backups)
+      # CUSTOMIZE — your media folders. The API reads these for the
+      # scanner and the browse endpoint. Adjust to match your library.
+      # Remove a line if you don't have that mount point on the host.
       - /mnt/animes:/mnt/animes
       - /mnt/media:/mnt/media
+      # CRITICAL for the encoder. ffmpeg uses this disk for intermediate
+      # files. Without this mount, encodes fall back to the main disk
+      # (slower, more wear on your SSD).
       - /mnt/hdd:/mnt/hdd
+      # OPTIONAL — uncomment to override the roadmap baked into the
+      # image with your own YAMLs (useful for forks/private builds).
+      # - ./roadmap:/app/roadmap:ro
     environment:
       - PYTHONUNBUFFERED=1
-      - TZ=${TZ:-America/New_York}
+      - TZ=${TZ:-America/New_York}                    # IANA timezone for log timestamps
+      # Optional HTTP Basic auth on every endpoint except /api/health.
+      # Set BOTH variables to enable; leave empty to disable.
       - BASIC_AUTH_USER=${BASIC_AUTH_USER:-}
       - BASIC_AUTH_PASS=${BASIC_AUTH_PASS:-}
+      # Database backend. Default `postgres`. Set to `sqlite` for a
+      # single-user single-file setup (postgres service still starts
+      # but is ignored by the app).
       - DB_BACKEND=${DB_BACKEND:-postgres}
-      - POSTGRES_HOST=${POSTGRES_HOST:-postgres}
+      - POSTGRES_HOST=${POSTGRES_HOST:-postgres}      # resolved via docker DNS
       - POSTGRES_PORT=${POSTGRES_PORT:-5432}
       - POSTGRES_USER=${POSTGRES_USER:-reencoder}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-reencoder}
       - POSTGRES_DB=${POSTGRES_DB:-reencoder}
     depends_on:
       postgres:
-        condition: service_healthy
+        condition: service_healthy                    # avoid reconnect spam at boot
     healthcheck:
       test: ["CMD-SHELL", "python3 -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:4246/api/health', timeout=3).status==200 else 1)\""]
       interval: 30s
@@ -68,20 +110,34 @@ services:
     networks:
       - reencoder-net
 
+
+  # ───────────────────────────────────────────────────────────────
+  # reencoder-worker — encoder loop.
+  # No public port; reports progress through the DB and event bus.
+  # ───────────────────────────────────────────────────────────────
   reencoder-worker:
     image: ghcr.io/rafo-stack/reencoder-worker:latest
     container_name: reencoder-worker
     restart: unless-stopped
     devices:
+      # Hardware acceleration: maps host's GPU render node into the
+      # container. Required for VAAPI (AMD/Intel) and QSV (Intel QSV).
+      # REMOVE THIS LINE if you have no GPU — encoder falls back to
+      # libx265 CPU (still works, just slower).
       - /dev/dri:/dev/dri
     volumes:
-      - ./data:/data
+      - ./data:/data                                  # CRITICAL — shared state with API
+      # CUSTOMIZE — same paths as the API. The worker needs READ AND
+      # WRITE access because it replaces originals in place once an
+      # encode succeeds and the hash is recorded.
       - /mnt/animes:/mnt/animes
       - /mnt/media:/mnt/media
+      # CRITICAL — ffmpeg's working directory for temp/output files.
       - /mnt/hdd:/mnt/hdd
     environment:
       - PYTHONUNBUFFERED=1
       - TZ=${TZ:-America/New_York}
+      # Same DB config as the API. Both processes share the same DB.
       - DB_BACKEND=${DB_BACKEND:-postgres}
       - POSTGRES_HOST=${POSTGRES_HOST:-postgres}
       - POSTGRES_PORT=${POSTGRES_PORT:-5432}
@@ -92,6 +148,8 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
+      # Heartbeat file is touched at every loop iteration. Healthy =
+      # modified less than 30s ago. Catches silent hangs / deadlocks.
       test: ["CMD-SHELL", "test -f /data/.worker_heartbeat && test $(( $(date +%s) - $(stat -c %Y /data/.worker_heartbeat) )) -lt 30"]
       interval: 30s
       timeout: 5s
@@ -105,20 +163,31 @@ services:
     networks:
       - reencoder-net
     deploy:
+      # Hard cap. libx265 + `slow` preset on 4K content can pull ~5GB
+      # RAM and pin all cores. Drop to 4 CPU / 4 GB if you only do 1080p.
       resources:
         limits:
           cpus: "8"
           memory: 8G
 
+
+  # ───────────────────────────────────────────────────────────────
+  # reencoder-web — nginx + Vite SPA bundle.
+  # The single public entry point. Serves the SPA and proxies
+  # /api/* and /ws to reencoder-api over the docker network.
+  # ───────────────────────────────────────────────────────────────
   reencoder-web:
     image: ghcr.io/rafo-stack/reencoder-web:latest
     container_name: reencoder-web
     restart: unless-stopped
     ports:
+      # PUBLIC — this is the URL users open in their browser.
+      # Change the host side (left of `:`) if 4246 is already in use:
+      # e.g. "8080:80" → http://host:8080/
       - "4246:80"
     depends_on:
       reencoder-api:
-        condition: service_started
+        condition: service_started                    # don't wait for healthy; proxy retries are fine
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ >/dev/null || exit 1"]
       interval: 30s
@@ -128,6 +197,9 @@ services:
     networks:
       - reencoder-net
 
+
+# Single isolated bridge network. Containers reach each other by
+# service name (e.g. the API connects to `postgres:5432`).
 networks:
   reencoder-net:
     driver: bridge

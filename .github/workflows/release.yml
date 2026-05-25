@@ -34,12 +34,17 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # API build context is the repo root so the Dockerfile can COPY
+          # both ./reencoder-api/ and ./roadmap/ into the image.
           - service: reencoder-api
-            context: ./reencoder-api
+            context: .
+            dockerfile: ./reencoder-api/Dockerfile
           - service: reencoder-worker
             context: ./reencoder-worker
+            dockerfile: ./reencoder-worker/Dockerfile
           - service: reencoder-web
             context: ./frontend
+            dockerfile: ./frontend/Dockerfile
 
     steps:
       - name: Checkout
@@ -75,6 +80,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
           push: true
           platforms: linux/amd64
           tags: |

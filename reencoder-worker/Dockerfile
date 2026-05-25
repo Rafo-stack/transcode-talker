@@ -1,13 +1,14 @@
 FROM python:3.12-slim
 
-# B-022: trocado o static build do johnvansickle pelo ffmpeg do apt-Debian.
-#   Motivo: o static do johnvansickle é CPU-only — não tem ``--enable-vaapi``
-#   no script de build deles. Resultado: encode VAAPI quebrava com
-#   "Device creation failed: -12" mesmo com /dev/dri mapeado e libva
-#   instalada, porque o binário do ffmpeg não tinha o suporte compilado.
-#   apt ffmpeg é construído contra a libva do próprio Debian (zero mismatch).
-#   mesa-va-drivers é o VA driver pro AMD/Intel — é o que efetivamente
-#   responde quando o ffmpeg abre /dev/dri/renderD128 via VAAPI.
+# B-022: swapped johnvansickle's static ffmpeg for the Debian apt ffmpeg.
+#   Reason: the static build from johnvansickle is CPU-only, it doesn't
+#   include ``--enable-vaapi`` in their build script. Result: VAAPI encodes
+#   would fail with "Device creation failed: -12" even with /dev/dri mapped
+#   and libva installed, because the ffmpeg binary itself had no VAAPI
+#   support compiled in.
+#   The apt ffmpeg is built against Debian's own libva (zero mismatch).
+#   mesa-va-drivers is the VA driver for AMD/Intel — that's what actually
+#   responds when ffmpeg opens /dev/dri/renderD128 via VAAPI.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     vainfo libva-drm2 libva2 mesa-va-drivers \

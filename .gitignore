@@ -2,7 +2,7 @@
 # reencoder-v3 — .gitignore
 # ──────────────────────────────────────────────────────────────
 
-# === Documentação interna + contexto pessoal (não publicado) ===
+# === Internal documentation + personal context (not published) ===
 Documentacao/
 CLAUDE.md
 
