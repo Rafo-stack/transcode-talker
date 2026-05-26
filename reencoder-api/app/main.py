@@ -214,7 +214,7 @@ async def root():
     # debuggable without exposing the legacy HTML.
     return {
         "service": "reencoder-api",
-        "version": "v0.3.5.1",
+        "version": "v0.3.5.2",
         "ui": "served by reencoder-web (nginx) on port 4246",
     }
 
@@ -226,11 +226,31 @@ async def get_config():
 
 
 @app.post("/api/config")
-async def save_config(config: Config):
-    cfg.save(config.model_dump())
+async def save_config(payload: dict):
+    # B-124: merge the incoming patch into the existing config instead of
+    # replacing it. Frontend pages send partial patches (e.g. EncodingSettings
+    # sends only encoder/preset/crf/advanced_encode; GeneralSettings sends
+    # scan_folders/exclude_folders). Previously this handler accepted a full
+    # `Config` model, which silently filled missing fields with their defaults
+    # and wiped out anything the user had set on another page. Critical
+    # data-loss bug — one Save click could destroy the entire setup.
+    if not isinstance(payload, dict):
+        return JSONResponse({"error": "expected JSON object"}, status_code=400)
+    current = cfg.load()
+    merged = {**current, **payload}
+    # Validate the merged result against the Config schema. Reject the request
+    # rather than persist invalid types — the user's existing config stays
+    # untouched on disk if anything is wrong with the patch.
+    try:
+        Config(**merged)
+    except Exception as exc:
+        return JSONResponse(
+            {"error": f"invalid config: {exc}"}, status_code=400
+        )
+    cfg.save(merged)
     _event_logger.info(
         "config_updated",
-        extra={"keys": sorted(config.model_dump().keys())[:8]},
+        extra={"keys": sorted(payload.keys())[:8]},
     )
     return {"ok": True}
 
@@ -723,7 +743,10 @@ async def cancel_job(job_id: int):
             })
             _event_logger.info(
                 "job_removed_from_queue",
-                extra={"session_id": session_id, "job_id": job_id, "filename": row["filename"]},
+                # B-123: extra key must NOT be "filename" — Python's
+                # LogRecord reserves that attribute (caller source path),
+                # and overwriting it raises KeyError inside makeRecord.
+                extra={"session_id": session_id, "job_id": job_id, "file": row["filename"]},
             )
             return {"ok": True, "action": "removed_from_queue", "job_id": job_id}
 

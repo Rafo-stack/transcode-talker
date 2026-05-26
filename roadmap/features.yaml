@@ -25,7 +25,7 @@
   status: planned
   priority: Medium
   area: backend
-  targeted_version: "0.4.0.0"
+  targeted_version: "0.5.0.0"
   summary: >
     Allow attaching a default profile to a scan folder so anime/* uses
     x265 and movies/* uses x264 automatically.
@@ -42,7 +42,7 @@
   status: open
   priority: Low
   area: frontend
-  targeted_version: "0.4.0.0"
+  targeted_version: "0.7.0.0"
   summary: >
     Optionally fire a Notification API toast (with permission) when a
     long-running session ends so the user doesn't need to keep checking.
@@ -59,7 +59,7 @@
   status: open
   priority: Medium
   area: frontend
-  targeted_version: "0.4.0.0"
+  targeted_version: "0.5.0.0"
   summary: >
     Inline action on each history row to re-queue that exact file with the
     current settings (useful after tweaking the preset / CRF).
@@ -77,7 +77,7 @@
   status: planned
   priority: Medium
   area: backend
-  targeted_version: "0.4.0.0"
+  targeted_version: "0.5.0.0"
   summary: >
     Today, clicking the X button on the file currently being encoded stops
     the entire session. We want a way to cancel just that file and let the
@@ -101,3 +101,360 @@
 
     Until this ships, the API stops the session and the UI warns the user
     before sending the request.
+
+# ───────────────────────────────────────────────────────────────────
+# Feature-gap audit findings (2026-05-25). Cluster of 17 new ideas from
+# a "what would a real homelab user want?" pass over the codebase.
+# ───────────────────────────────────────────────────────────────────
+
+- id: F-306
+  title: External channel notifications (Discord / Telegram / email / ntfy)
+  status: planned
+  priority: High
+  area: integration
+  targeted_version: "0.4.0.0"
+  summary: >
+    Native delivery of encode-complete / encode-failed events to common
+    home-server channels. Goes beyond F-303 (browser toasts) by reaching
+    you while the browser is closed.
+  plain_summary: |
+    F-303 fires a browser notification, which only works if the tab is
+    open. We also want messages on Discord, Telegram, ntfy.sh, or email so
+    a 6-hour overnight encode can notify you without a browser running.
+    Each channel is opt-in with a template (job count, space saved,
+    failures).
+  details: |
+    New `notification_channels` table (id, type, endpoint, secret, enabled,
+    template_id). POST `/api/notifications/test` to validate setup. Worker
+    fires HTTP POST or SMTP at session boundaries. Discord embeds with
+    color by outcome (green/red), Telegram bot via official API, ntfy.sh
+    via simple HTTP POST.
+
+- id: F-307
+  title: Library Health Dashboard with "reclaim X TB" projection
+  status: planned
+  priority: High
+  area: frontend
+  targeted_version: "0.4.0.0"
+  summary: >
+    Cards on the Dashboard showing largest non-HEVC files, oldest encodes,
+    candidates for higher-CRF re-encoding, and a summed "reclaim
+    potential" in GB.
+  plain_summary: |
+    The Dashboard tells you what you've already done; it should also tell
+    you what's left to do. "You could reclaim 412 GB by re-encoding 38
+    files still in H.264" turns this from a one-off task into an ongoing
+    optimization workflow.
+  details: |
+    New endpoint `/api/library/stats` aggregating: largest files still in
+    H.264, oldest completed encodes (potential candidates for higher
+    CRF), median bitrate per resolution. Top-3 KPI cards on Dashboard
+    plus a "What to encode next" panel.
+
+- id: F-308
+  title: OIDC / OAuth2 single sign-on (Authelia, Authentik, Pocket-ID)
+  status: planned
+  priority: High
+  area: security
+  targeted_version: "0.4.0.0"
+  summary: >
+    Replace HTTP Basic auth with OIDC discovery so multi-user homelabs can
+    integrate with their existing SSO provider.
+  plain_summary: |
+    Many homelabs already run Authelia / Authentik for single sign-on.
+    Today, Transcode Talker is stuck with HTTP Basic auth, which means a
+    second password to type and zero integration with the rest of the
+    stack. OIDC fixes both and gives us a place to land per-user
+    permissions later.
+  details: |
+    Swap `_basic_auth_middleware` for a JWT-validation middleware that
+    accepts a bearer token from a configured OIDC provider. Discovery
+    via `OIDC_ISSUER_URL`; cache JWKs. User identity stored in session
+    metadata; sets the stage for per-user audit logging.
+
+- id: F-309
+  title: GPU temperature throttling for the worker
+  status: planned
+  priority: High
+  area: worker
+  targeted_version: "0.4.0.0"
+  summary: >
+    Pause ffmpeg when GPU temp crosses a configurable threshold. Resume
+    when it cools below the floor. Prevents thermal damage on long batches.
+  plain_summary: |
+    A long batch of 4K encodes can hold the GPU at 85+ C for hours, which
+    shortens the card's life. We want the worker to read `/sys/class/
+    thermal/` or nvidia-smi, pause when temp crosses the user's ceiling,
+    and resume when it cools off.
+  details: |
+    New config block `thermal: {enabled: true, max_c: 80, resume_c: 70}`.
+    Worker reads temp every 5s during encoding; on overheat, SIGSTOP the
+    ffmpeg PID, sleep, then SIGCONT. Surfaces a "Paused (thermal)" state
+    in the UI.
+
+- id: F-310
+  title: Sonarr / Radarr / Lidarr webhook to auto-queue new downloads
+  status: planned
+  priority: High
+  area: integration
+  targeted_version: "0.5.0.0"
+  summary: >
+    Listen on `/api/integrations/arr-webhook` for the standard Servarr
+    "OnDownload" payload and queue the downloaded file for re-encoding
+    automatically.
+  plain_summary: |
+    If you use the *arr stack (Sonarr/Radarr/Lidarr), every new download
+    is a candidate for re-encoding. Today you have to scan the folder
+    after. With a webhook, the file lands → *arr posts → Transcode Talker
+    auto-queues. Zero manual steps.
+  details: |
+    Webhook endpoint validates the Servarr payload, resolves the file
+    path against scan folders (rejects outside-of-scope paths), and
+    pushes to the encode queue. Per-app secrets in Settings →
+    Integrations. Idempotent (skips files already encoded).
+
+- id: F-311
+  title: Multi-node distributed encoding
+  status: open
+  priority: Medium
+  area: architecture
+  targeted_version: "0.6.0.0"
+  summary: >
+    Allow multiple worker hosts to share a single queue. One GPU box +
+    one CPU box = much faster batches on mixed-codec libraries.
+  plain_summary: |
+    Today there's exactly one worker. If you have spare hardware (an old
+    desktop, a NAS with CPU to spare, a GPU box), you can't use it.
+    Letting workers register themselves with the central API and pull
+    jobs from a shared queue unlocks that.
+  details: |
+    New `workers` table (id, hostname, capabilities, max_parallel,
+    last_heartbeat). Worker registers via `POST /api/workers/register`.
+    Jobs gain `assigned_worker_id`. Worker polls `/api/jobs/next?
+    worker_id=<me>&caps=vaapi,nvenc`. Heartbeat-driven leasing prevents
+    duplicate processing.
+
+- id: F-312
+  title: Per-file quality validation via VMAF / SSIM
+  status: open
+  priority: Medium
+  area: worker
+  targeted_version: "0.6.0.0"
+  summary: >
+    After encoding, run a VMAF comparison between source and output. If
+    score drops below threshold, mark the file for re-encode at higher CRF.
+  plain_summary: |
+    HEVC at CRF 26 is "good enough" most of the time, but some sources
+    look noticeably worse. VMAF gives an objective score (0-100) for the
+    perceived quality drop. We compute it post-encode and flag files that
+    crossed your acceptance threshold.
+  details: |
+    After successful encode, run `ffmpeg -i source -i output -lavfi
+    libvmaf=model_path=/usr/local/share/vmaf/vmaf_v0.6.1.json`. Store the
+    score in the jobs table. Threshold configurable per profile;
+    sub-threshold encodes show a "quality flag" in History with a
+    one-click re-encode action.
+
+- id: F-313
+  title: Filename / output folder rules with dry-run preview
+  status: planned
+  priority: Medium
+  area: backend
+  targeted_version: "0.5.0.0"
+  summary: >
+    Optional rename pattern (e.g. add `.hevc` suffix) and output-folder
+    redirect (e.g. `/mnt/media/original/` → `/mnt/media/hevc/`), with a
+    dry-run before applying.
+  plain_summary: |
+    Right now we overwrite the source file in place. Some users want the
+    encoded version in a separate folder, or with a different name (for
+    Plex compatibility or backup). A rule engine lets them define
+    patterns once and reuse them per scan folder.
+  details: |
+    New table `rename_rules(id, folder_pattern, output_folder,
+    filename_template, dry_run_only)`. Template variables: `{stem}`,
+    `{codec}`, `{crf}`, `{ext}`, `{date}`. Worker applies the matching
+    rule at the atomic-move step. Scan page preview shows what each file
+    would be renamed to.
+
+- id: F-314
+  title: Auto-refresh Plex / Jellyfin library after each encode
+  status: planned
+  priority: Medium
+  area: integration
+  targeted_version: "0.6.0.0"
+  summary: >
+    Fire `POST /library/{id}/refresh` to Plex (or Jellyfin / Emby) when a
+    job completes so the media server picks up the new file immediately.
+  plain_summary: |
+    After an encode, Plex / Jellyfin doesn't see the new file until its
+    next scheduled scan (sometimes hours later). A one-shot library
+    refresh closes that gap and means the encoded file is playable as
+    soon as it lands.
+  details: |
+    Settings → Integrations: Plex URL + token, Jellyfin URL + API key,
+    Emby URL + key. Worker fires the refresh API call on `mv` success.
+    Per-folder mapping so we only refresh the relevant library section.
+
+- id: F-315
+  title: HDR and Dolby Vision pass-through / skip detection
+  status: open
+  priority: Medium
+  area: encoder
+  targeted_version: "0.6.0.0"
+  summary: >
+    Detect HDR10 / HDR10+ / Dolby Vision sources via ffprobe and skip
+    them by default (re-encoding usually mangles the metadata).
+  plain_summary: |
+    HDR content is easy to break with a default x265 re-encode (you lose
+    the color metadata, the dynamic range, and Dolby Vision RPU layer).
+    Detecting HDR upfront lets us skip those files entirely or, when the
+    user opts in, do a metadata-preserving encode.
+  details: |
+    Scanner reads `color_transfer`, `color_primaries`, and side-data via
+    ffprobe. Files flagged as HDR10/DV go to a separate "HDR skipped"
+    list with an opt-in toggle in Encoding settings. When opted in,
+    append `-colorspace`, `-color_primaries`, `-color_trc`, and Dolby
+    Vision-specific flags.
+
+- id: F-316
+  title: Audio track selection and downmix
+  status: open
+  priority: Medium
+  area: encoder
+  targeted_version: "0.6.0.0"
+  summary: >
+    Choose which audio tracks to keep by language, and optionally downmix
+    5.1 → stereo / transcode AC3 → AAC for compatibility.
+  plain_summary: |
+    Many anime / movie files ship with 3-4 audio tracks (original + dubs +
+    commentary). Keeping all of them eats bitrate without value. A
+    language filter ("keep only en, ja") and an optional downmix to
+    stereo + transcode to AAC shrinks files further without touching
+    video.
+  details: |
+    Scanner records `streams` JSON column from ffprobe. New profile
+    fields: `audio_keep_languages` (list), `audio_downmix` (bool),
+    `audio_codec_override` (AAC / OPUS / passthrough). Encoder builds
+    `-map 0:a:m:language:en -af aresample=...` from the resolved profile.
+
+- id: F-317
+  title: Scheduled scans with cron-style expressions
+  status: open
+  priority: Medium
+  area: backend
+  targeted_version: "0.7.0.0"
+  summary: >
+    Run scans automatically on a schedule (nightly 3 AM, every Sunday,
+    etc.) so newly downloaded content gets noticed without manual work.
+  plain_summary: |
+    Right now, scans are manual. We want to set a cron expression
+    ("every night at 3 AM") and have Transcode Talker scan automatically.
+    Combined with F-310 (arr webhook), most users would never need to
+    touch the Scan page.
+  details: |
+    New table `scheduled_scans(id, cron_expr, scan_folders, enabled,
+    last_run, next_run)`. Background asyncio task wakes every 60s,
+    checks expressions, triggers `/api/scan` matching the schedule.
+    UI lives in Settings → Schedule with a cron expression validator.
+
+- id: F-318
+  title: Full-text search and faceted filters on History
+  status: open
+  priority: Medium
+  area: frontend
+  targeted_version: "0.7.0.0"
+  summary: >
+    Search filenames across history with a real text index; filter by
+    codec, resolution, status, date range, and folder.
+  plain_summary: |
+    Looking for "that one anime I encoded last month" requires scrolling
+    forever. Adding a text search box with codec/resolution facets makes
+    History useful as a queryable archive instead of a scroll-only log.
+  details: |
+    Enhance `/api/history` with `q=` (Postgres `to_tsvector` on filename),
+    facets for `codec`, `resolution`, `status`. Add `resolution_label`
+    + `codec_label` columns populated from ffprobe metadata at scan time
+    (M-007 + M-029 already collect the raw data).
+
+- id: F-319
+  title: Subtitle extraction and external SRT merge
+  status: open
+  priority: Low
+  area: worker
+  targeted_version: "0.7.0.0"
+  summary: >
+    Extract embedded subtitle tracks to external .srt files alongside the
+    encoded output. Optionally merge a sibling .srt back into the
+    container after encoding.
+  plain_summary: |
+    Some users prefer subtitles as external .srt files for backup or for
+    media servers that don't reliably read embedded subs. Extract + merge
+    is a one-pass cost when the encoder is already touching the file.
+  details: |
+    Post-encode, worker runs `ffmpeg -i source -map 0:s -c:s srt
+    <out>.<lang>.srt` per subtitle stream. Configurable per profile:
+    `extract_subtitles` (bool), `merge_external_srt` (bool). External
+    .srt files in the source dir are mapped into the encoded output if
+    found.
+
+- id: F-320
+  title: Automatic backup to S3 / B2 / rsync target
+  status: open
+  priority: Low
+  area: backend
+  targeted_version: "0.8.0.0"
+  summary: >
+    Nightly upload of `data/reencoder.db` (or pg_dump) plus the latest
+    JSON exports to S3-compatible storage. Restore drill via the UI.
+  plain_summary: |
+    Today, `data/` is the source of truth for everything. A disk failure
+    loses your history forever. An automatic offsite backup to S3 or B2
+    (or rsync to another host) is a cheap insurance policy.
+  details: |
+    New table `backup_targets(id, type, endpoint, bucket, secret_ref,
+    schedule)`. Cron-style scheduler (depends on F-317 infrastructure).
+    Uploads encrypted with a passphrase. UI: "Backup status" card on
+    Settings → Database with "Restore from backup" action.
+
+- id: F-321
+  title: PWA install + mobile-friendly Dashboard view
+  status: open
+  priority: Low
+  area: frontend
+  targeted_version: "0.8.0.0"
+  summary: >
+    Add a manifest.json + service worker so the app can be installed on
+    iOS / Android home screens, with a stacked Dashboard layout on small
+    viewports.
+  plain_summary: |
+    Most users check encode progress on their phone. The current UI is
+    desktop-first; the sidebar takes 200px of viewport on a phone. A
+    proper PWA shell with a stacked Dashboard view (and the sidebar
+    collapsed to a hamburger menu) makes the app actually usable on
+    mobile.
+  details: |
+    Add `public/manifest.json` with app metadata + icons. Register a
+    minimal service worker for offline shell caching. Media queries in
+    Tailwind already exist; verify and fix breakpoints below 768px on
+    every page.
+
+- id: F-322
+  title: Anime / film tune presets and grain synthesis option
+  status: open
+  priority: Low
+  area: worker
+  targeted_version: "0.7.0.0"
+  summary: >
+    Built-in profiles for `-tune animation` (smoother for cel-shaded
+    content) and `-tune grain` / `--no-grain` (preserves or synthesizes
+    film grain for live-action).
+  plain_summary: |
+    libx265 has tuning flags for different source types (animation looks
+    cleaner with `-tune animation`; film looks better with grain
+    preservation). Expose these as ready-made profiles so the user
+    doesn't have to learn the flag names.
+  details: |
+    Depends on F-301 (profiles). Ship default profiles "anime" and
+    "film" that pre-fill the tune flag and a slightly different CRF.
+    Document the trade-offs in the in-app help.

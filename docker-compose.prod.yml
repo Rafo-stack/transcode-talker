@@ -13,7 +13,7 @@
 #
 # Image tags:
 #   `:latest`     — most recent stable release
-#   `:0.3.5.1`    — specific version (recommended for prod, immutable)
+#   `:0.3.5.2`    — specific version (recommended for prod, immutable)
 #   `:0.3.5`      — latest patch within the 0.3.5 minor
 #
 # To pin: replace ":latest" below with the version you want.

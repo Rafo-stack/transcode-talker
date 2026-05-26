@@ -73,6 +73,7 @@ export interface HistoryQuery {
 // Backend response shape (raw column names match the DB).
 interface RawHistoryRow {
   id: number
+  session_id?: string | null
   filename: string
   original_path: string
   original_size_mb: number
@@ -83,6 +84,17 @@ interface RawHistoryRow {
   error_msg: string | null
   started_at: string | null
   completed_at: string | null
+  // Detail fields used by the History View modal (B-122).
+  original_hash?: string | null
+  encoded_hash?: string | null
+  crf_used?: number | null
+  current_frame?: number | null
+  total_frames?: number | null
+  pct?: number | null
+  fps?: string | null
+  source_metadata?: string | null
+  destination_metadata?: string | null
+  ffmpeg_cmd?: string | null
 }
 
 function normalizeRecord(r: RawHistoryRow): HistoryRecord {
@@ -97,6 +109,19 @@ function normalizeRecord(r: RawHistoryRow): HistoryRecord {
     encoder: r.encoder_used,
     error: r.error_msg,
     finished_at: r.completed_at ?? r.started_at ?? '',
+    session_id: r.session_id ?? null,
+    started_at: r.started_at,
+    completed_at: r.completed_at,
+    original_hash: r.original_hash ?? null,
+    encoded_hash: r.encoded_hash ?? null,
+    crf_used: r.crf_used ?? null,
+    current_frame: r.current_frame ?? null,
+    total_frames: r.total_frames ?? null,
+    pct: r.pct ?? null,
+    fps: r.fps ?? null,
+    source_metadata: r.source_metadata ?? null,
+    destination_metadata: r.destination_metadata ?? null,
+    ffmpeg_cmd: r.ffmpeg_cmd ?? null,
   }
 }
 

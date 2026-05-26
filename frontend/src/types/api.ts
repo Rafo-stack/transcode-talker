@@ -76,6 +76,74 @@ export interface HistoryRecord {
   duration_s?: number | null
   finished_at: string
   error?: string | null
+  // Detail fields populated by the same /api/history list response, used by
+  // the row View modal. Optional so a slim use of HistoryRecord still works.
+  session_id?: string | null
+  started_at?: string | null
+  completed_at?: string | null
+  original_hash?: string | null
+  encoded_hash?: string | null
+  crf_used?: number | null
+  current_frame?: number | null
+  total_frames?: number | null
+  pct?: number | null
+  fps?: string | null
+  source_metadata?: string | null
+  destination_metadata?: string | null
+  ffmpeg_cmd?: string | null
+}
+
+// Parsed ffprobe stream — matches what the API serializes into
+// source_metadata / destination_metadata. Not every codec populates every
+// field; readers should defensive-check before rendering.
+export interface MediaStream {
+  index: number
+  type: 'video' | 'audio' | 'subtitle' | 'attachment' | 'data'
+  codec: string
+  codec_long?: string | null
+  profile?: string | null
+  language?: string | null
+  title?: string | null
+  default?: boolean
+  forced?: boolean
+  bit_rate?: number | null
+  width?: number
+  height?: number
+  pix_fmt?: string | null
+  color_space?: string | null
+  color_transfer?: string | null
+  level?: number | null
+  r_frame_rate?: string | null
+  avg_frame_rate?: string | null
+  nb_frames?: number | null
+  duration?: number | string | null
+  sample_rate?: number | null
+  channels?: number | null
+  channel_layout?: string | null
+  filename?: string | null
+  mimetype?: string | null
+}
+
+export interface MediaFormat {
+  filename?: string
+  format_name?: string
+  format_long_name?: string
+  duration?: number
+  size?: number
+  bit_rate?: number
+  nb_streams?: number
+  tags?: Record<string, string>
+}
+
+export interface ParsedMetadata {
+  format?: MediaFormat
+  video?: MediaStream[]
+  audio?: MediaStream[]
+  subtitle?: MediaStream[]
+  attachment?: MediaStream[]
+  data?: MediaStream[]
+  chapters?: Array<{ id?: number; start_time?: string; end_time?: string; tags?: Record<string, string> }>
+  streams?: MediaStream[]
 }
 
 export interface HistoryStats {

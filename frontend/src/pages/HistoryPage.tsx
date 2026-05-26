@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Check,
   Download,
+  Eye,
   History as HistoryIcon,
   Trash2,
   Upload,
@@ -15,7 +16,9 @@ import { Button } from '@/components/ui/Button'
 import { StatusBadge } from '@/components/ui/Badge'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { useToast } from '@/components/ui/Toast'
+import { HistoryDetailModal } from '@/components/HistoryDetailModal'
 import { formatBytes, formatDate, truncatePath, cn } from '@/lib/utils'
+import type { HistoryRecord } from '@/types/api'
 
 const STATUS_OPTIONS = ['', 'completed', 'failed', 'skipped', 'interrupted'] as const
 
@@ -28,6 +31,7 @@ export function HistoryPage() {
   const [sortBy, setSortBy] = useState<string>('finished_at')
   const [order, setOrder] = useState<'asc' | 'desc'>('desc')
   const [selected, setSelected] = useState<Set<number>>(new Set())
+  const [detailRecord, setDetailRecord] = useState<HistoryRecord | null>(null)
 
   const listQ = useQuery({
     queryKey: ['history.list', { page, pageSize, status, sortBy, order }],
@@ -194,6 +198,7 @@ export function HistoryPage() {
                 <th className="px-3 py-2 text-right w-28">Original</th>
                 <th className="px-3 py-2 text-right w-28">Saved</th>
                 <th className="px-3 py-2 text-left w-48">Finished</th>
+                <th className="px-3 py-2 text-center w-16">View</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
@@ -219,6 +224,16 @@ export function HistoryPage() {
                     ) : <span className="text-fg-muted">—</span>}
                   </td>
                   <td className="px-3 py-2 text-xs text-fg-muted whitespace-nowrap">{formatDate(r.finished_at)}</td>
+                  <td className="px-3 py-2 text-center">
+                    <button
+                      onClick={() => setDetailRecord(r)}
+                      title="View details"
+                      aria-label={`View details for ${r.filename}`}
+                      className="inline-flex items-center justify-center w-7 h-7 rounded-md text-fg-muted hover:text-accent hover:bg-accent/10 transition-colors"
+                    >
+                      <Eye size={15} />
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -247,6 +262,8 @@ export function HistoryPage() {
           </div>
         </div>
       )}
+
+      <HistoryDetailModal record={detailRecord} onClose={() => setDetailRecord(null)} />
     </PageContainer>
   )
 }

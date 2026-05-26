@@ -48,7 +48,7 @@
   severity: Low
   priority: Low
   area: frontend
-  targeted_version: "0.3.5.2"
+  targeted_version: "0.4.0.1"
   summary: >
     When the API container restarts, the legacy UI silently reconnects via
     exponential backoff but never tells the user the live progress bar is
@@ -69,7 +69,7 @@
   severity: Low
   priority: Low
   area: backend
-  targeted_version: "0.3.5.2"
+  targeted_version: "0.4.0.1"
   summary: >
     `/api/hdd/status` returns an empty object when the mount is missing
     instead of an explicit "not configured" signal.
@@ -86,7 +86,7 @@
   severity: Medium
   priority: Low
   area: backend
-  targeted_version: "0.3.5.2"
+  targeted_version: "0.3.5.4"
   summary: >
     `/api/history/export` loads every row before returning the response,
     which on a 50k-row history can stall the API for several seconds.
@@ -97,3 +97,501 @@
   details: |
     `reencoder-api/app/main.py:859`. Convert to `StreamingResponse` writing
     NDJSON. The import endpoint already handles arbitrary line counts.
+
+# ───────────────────────────────────────────────────────────────────
+# Security audit findings (2026-05-25, post-public-release on GitHub).
+# Cluster of 14 new entries from a full-codebase security review. The
+# top 7 (B-106 to B-112) are Critical/High and are scoped to 0.3.5.2.
+# ───────────────────────────────────────────────────────────────────
+
+- id: B-106
+  title: WebSocket endpoint accepts connections without HTTP Basic auth
+  status: open
+  severity: Critical
+  priority: High
+  area: security
+  targeted_version: "0.3.5.3"
+  summary: >
+    `/ws` is not gated by `_basic_auth_middleware`. Any unauthenticated client
+    on the LAN can subscribe to live encode events (file paths, progress,
+    errors) even when BASIC_AUTH is configured.
+  plain_summary: |
+    The WebSocket endpoint that powers the live progress bar bypasses HTTP
+    Basic auth. Anyone who can reach the host on port 4246 can watch what
+    you're encoding in real time — file paths, frame counts, error messages.
+    Same surface that the rest of the API protects, but unprotected here.
+  details: |
+    `reencoder-api/app/main.py:1478-1490`. The middleware at lines 98-113
+    only inspects HTTP requests; WebSocket upgrades go through a separate
+    code path. Fix: extract Basic auth from `WebSocket.headers` and call
+    `_check_basic_auth()` before `await websocket.accept()`. Return 1008
+    policy-violation close code on failure.
+
+- id: B-107
+  title: Admin logs SSE stream is unauthenticated
+  status: open
+  severity: Critical
+  priority: High
+  area: security
+  targeted_version: "0.3.5.3"
+  summary: >
+    `/api/admin/logs/stream` (Server-Sent Events) is not in the auth-exempt
+    list explicitly, but the middleware's wildcard logic lets it through
+    without credentials. Leaks every structured log entry to anonymous clients.
+  plain_summary: |
+    The Admin Logs page streams every backend log line over SSE. That stream
+    is currently public — an unauthenticated browser tab on your LAN can
+    open it and watch every API call, error, and business event (scans,
+    encodes, config changes) in real time.
+  details: |
+    `reencoder-api/app/main.py:1579-1612` for the endpoint. The middleware
+    at line 104 exempts `/api/health` and `/static/*`; the path
+    `/api/admin/logs/stream` slips through because the middleware short-
+    circuits SSE-style requests. Fix: enforce auth in the route handler
+    itself (not just the middleware) and reject the connection with 401
+    before opening the streaming response.
+
+- id: B-108
+  title: ORDER BY column interpolated via f-string in /api/history
+  status: open
+  severity: Critical
+  priority: High
+  area: security
+  targeted_version: "0.3.5.3"
+  summary: >
+    Even though `sort_by` is validated against `_HISTORY_SORT_COLUMNS`, the
+    value is later interpolated into the SQL string via f-string. Pattern is
+    fragile to refactor and one missed validation breaks every Postgres
+    deployment open to SQL injection.
+  plain_summary: |
+    The history page lets you sort by column. The backend validates the
+    column name against a safelist (good), but then drops it into the SQL
+    statement using string formatting. If anyone ever refactors and drops
+    that safelist check, we get full SQL injection on the history endpoint.
+    Move to parameterized identifiers.
+  details: |
+    `reencoder-api/app/main.py:920-955`. Current code is `f"ORDER BY {sort_by} {order}"`
+    after validating sort_by. Fix: build the ORDER BY clause via SQLAlchemy's
+    `text()` with bound identifiers or via a dict mapping safelist names to
+    `Column` objects: `query.order_by(_HISTORY_SORT_COLUMNS[sort_by].asc())`.
+
+- id: B-109
+  title: No CSRF protection on state-mutating endpoints
+  status: open
+  severity: High
+  priority: High
+  area: security
+  targeted_version: "0.3.5.3"
+  summary: >
+    All POST/DELETE endpoints (start encode, cancel, delete history, restore
+    backup, clean temp) are CSRF-able. A malicious page on the same LAN can
+    force the user's browser to trigger destructive actions.
+  plain_summary: |
+    The API has no CSRF token. If you visit a malicious site while logged
+    in, JavaScript on that site can issue POST/DELETE requests to your
+    Transcode Talker instance and your browser will happily forward your
+    Basic auth credentials. Worst case: restore a backup overwriting your
+    history, cancel running encodes, or delete records.
+  details: |
+    Affected endpoints include `reencoder-api/app/main.py:409, 529, 572,
+    657, 696, 1240, 1262, 1334, 1443`. Fix: add `fastapi-csrf-protect`
+    middleware that requires a token on a custom header (e.g. `X-CSRF-Token`)
+    matching a session cookie. Frontend already proxies through nginx so
+    same-origin checks are reliable.
+
+- id: B-110
+  title: No rate limiting on scan, WebSocket, or SSE endpoints
+  status: open
+  severity: High
+  priority: High
+  area: security
+  targeted_version: "0.3.5.3"
+  summary: >
+    `/api/scan` triggers expensive filesystem walks; `/ws` and `/api/admin/
+    logs/stream` accept unlimited concurrent connections. Trivial DoS surface.
+  plain_summary: |
+    There are no per-IP rate limits. An attacker (or a misbehaving script)
+    can hammer `/api/scan` and pin the server's I/O, or open thousands of
+    WebSocket connections to exhaust memory. Even legitimate users can
+    accidentally DoS themselves with a runaway tab.
+  details: |
+    `reencoder-api/app/main.py:297` (scan endpoint), `1478` (WS), `1579`
+    (SSE). The broadcaster holds all WS clients in an in-memory set at
+    line 71. Fix: add `slowapi` rate-limiter (1 scan / 30s / IP), cap WS
+    connections per IP at 10, and reject SSE subscriptions above a
+    global threshold (e.g. 50 concurrent).
+
+- id: B-111
+  title: Insecure POSTGRES_PASSWORD default propagates if .env is absent
+  status: open
+  severity: High
+  priority: High
+  area: security
+  targeted_version: "0.3.5.4"
+  summary: >
+    `docker-compose.yml` uses `${POSTGRES_PASSWORD:-reencoder}`. If the user
+    boots without a `.env` file, the database silently runs with the
+    documented insecure default — including in misconfigured prod deployments.
+  plain_summary: |
+    The compose file falls back to the password `reencoder` if you forget
+    to set one. That's fine for a one-line local test, but the same fallback
+    triggers in production if you forget the `.env` file or a deploy script
+    drops it. Database is then trivially compromised if exposed.
+  details: |
+    `docker-compose.yml:38, 100` and `docker-compose.prod.yml`. Fix: change
+    the default to an empty string, then add a startup check in
+    `reencoder-api/app/db_backend.py` that aborts with a loud error if
+    `DB_BACKEND=postgres` and `POSTGRES_PASSWORD` equals the documented
+    example value. Document the override mechanism in the README.
+
+- id: B-112
+  title: Postgres connection errors may leak password in stack traces
+  status: open
+  severity: High
+  priority: Medium
+  area: security
+  targeted_version: "0.3.5.4"
+  summary: >
+    SQLAlchemy exceptions and uncaught traceback paths can include the full
+    DSN (with password in plaintext) in container logs and admin SSE stream.
+  plain_summary: |
+    If Postgres becomes unreachable, the exception thrown by SQLAlchemy
+    typically includes the connection string in plaintext, password and
+    all. That ends up in `docker logs` and in the in-app Admin Logs page.
+    Anyone who can read either of those gets the DB credentials.
+  details: |
+    `reencoder-api/app/db_backend.py` and `db_engine.py`. Fix: wrap
+    connection establishment in a `try/except SQLAlchemyError`, log a
+    sanitized message (`Postgres unreachable: <host>:<port>` — no
+    password), and re-raise a custom exception that doesn't carry the DSN.
+
+- id: B-113
+  title: Backup restore endpoint may follow symlinks outside /data/backups
+  status: open
+  severity: Medium
+  priority: Medium
+  area: security
+  targeted_version: "0.3.5.5"
+  summary: >
+    `db_backup.restore_backup()` validates the resolved path against the
+    backups dir using `.resolve().parents`, which silently follows symlinks.
+  plain_summary: |
+    If an attacker can drop a symlink into `/data/backups/` (e.g., via a
+    misconfigured shared volume), the restore endpoint can be tricked into
+    reading or writing files outside that directory.
+  details: |
+    `reencoder-api/app/db_backup.py:216-243`. Switch the check to
+    `Path.is_relative_to()` (Python 3.12+) and reject names containing
+    `/` or `..`. Optionally validate that the path is not a symlink with
+    `Path.is_symlink()` before opening.
+
+- id: B-114
+  title: Encoder paths could break if interpolated into ffmpeg filters
+  status: open
+  severity: Medium
+  priority: Low
+  area: security
+  targeted_version: "0.3.5.5"
+  summary: >
+    Current code passes paths as argv (safe), but the staging path concat
+    pattern `src_path + ".reencoded.tmp"` makes future refactors that
+    interpolate paths into a `-vf` filter argument vulnerable to filter
+    injection.
+  plain_summary: |
+    Filenames with unusual characters could break ffmpeg filter strings if
+    they're ever placed inside a `-vf` argument. Today we always pass them
+    as separate argv values, which is safe. Adding a unit test + comment
+    so the next refactor doesn't regress this.
+  details: |
+    `reencoder-worker/worker/encoder.py:528, 687`. Add a test with a
+    filename containing `[`, `]`, `:`, `'`, and a newline; assert ffmpeg
+    is invoked correctly. Document that paths must not be interpolated
+    into filter graphs.
+
+- id: B-115
+  title: FFmpeg stderr stored verbatim, allows ANSI/control-byte injection in UI
+  status: open
+  severity: Medium
+  priority: Medium
+  area: security
+  targeted_version: "0.3.5.5"
+  summary: >
+    `error_msg` in the jobs table preserves ffmpeg's raw output including
+    ANSI escape sequences. A crafted file can emit terminal escapes that
+    corrupt log viewers or hide bytes when rendered in the UI.
+  plain_summary: |
+    If a malicious media file makes ffmpeg emit an error message containing
+    terminal color codes or cursor controls, those escape sequences are
+    stored unchanged and rendered into the UI. The UI is mostly safe (it's
+    text in a div), but Admin Logs streaming and any future CLI tool could
+    misbehave.
+  details: |
+    `reencoder-worker/worker/encoder.py:632-640`. Strip ANSI before
+    storing: `re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', error_msg)`. Also
+    truncate to 2048 chars to bound DB row size and SSE message size.
+
+- id: B-116
+  title: .env.example documents insecure default without a startup check
+  status: open
+  severity: Medium
+  priority: Low
+  area: security
+  targeted_version: "0.3.5.5"
+  summary: >
+    Users who copy `.env.example` to `.env` and forget to change the
+    password get no warning at boot. There's no programmatic guardrail.
+  plain_summary: |
+    The example env file ships with the placeholder password `reencoder`
+    so the stack boots zero-config. If you copy the file to `.env` and
+    forget to change it (easy to do during a hasty deploy), the API and
+    DB happily start with the insecure default. We want a loud refusal
+    or at least a banner warning.
+  details: |
+    Pairs with B-111. Even after the fallback in `docker-compose.yml` is
+    fixed, copying `.env.example` to `.env` reintroduces the default.
+    Fix: API logs a WARNING at startup if it detects the documented
+    example password; UI surfaces a one-time banner until changed.
+
+- id: B-117
+  title: All authenticated users have admin privileges (no role separation)
+  status: open
+  severity: Low
+  priority: Low
+  area: security
+  targeted_version: "0.4.0.1"
+  summary: >
+    Destructive endpoints (DB restore, history wipe, admin log stream) use
+    the same Basic auth as everyday endpoints. No second factor or read-only
+    role.
+  plain_summary: |
+    If you share your Transcode Talker instance with a friend or housemate,
+    they have the same powers you do — including restoring a backup over
+    your current history. We want a separate admin role (or at least a
+    second password gate on the truly destructive endpoints).
+  details: |
+    `reencoder-api/app/main.py:1416-1574, 1567-1570`. Sketch: add
+    `ADMIN_AUTH_USER` / `ADMIN_AUTH_PASS` env vars, gate
+    `/api/db/restore`, `/api/db/wipe`, `/api/admin/*` with a second
+    auth check that requires re-entry of the admin password from the UI.
+
+- id: B-118
+  title: Session log files are world-readable inside the container
+  status: open
+  severity: Low
+  priority: Low
+  area: security
+  targeted_version: "0.4.0.1"
+  summary: >
+    `/data/logs/session_*.jsonl` files are written with the default umask,
+    leaving them readable by any non-root process in the container or by
+    the host user the volume is mounted as.
+  plain_summary: |
+    The per-session JSONL logs contain file paths, sizes, encoder settings,
+    and error messages. They're written with default umask, so any process
+    in the container can read them, and on the host they're readable by
+    anyone who can list the volume.
+  details: |
+    `reencoder-api/app/database.py:605-610`. Fix: `os.chmod(log_path,
+    0o600)` after writing, or set umask in the entrypoint. Verify the
+    Postgres data dir is also tight.
+
+- id: B-119
+  title: Postgres container runs with no extra security hardening
+  status: open
+  severity: Low
+  priority: Low
+  area: security
+  targeted_version: "0.4.0.1"
+  summary: >
+    The compose file uses `postgres:16-alpine` with default settings: no
+    `--security-opt no-new-privileges`, no statement-level audit logging,
+    no row-level security policies.
+  plain_summary: |
+    Postgres runs with its stock Docker config. Adding a few security
+    options (no-new-privileges, drop unused capabilities) costs nothing
+    and prevents container escapes from gaining extra privileges.
+  details: |
+    `docker-compose.yml:28-52`. Add `security_opt: ["no-new-privileges:
+    true"]`, `cap_drop: [ALL]`, `cap_add: [CHOWN, SETGID, SETUID,
+    DAC_OVERRIDE]` (the minimum Postgres needs). Document the
+    `pg_stat_statements` extension as optional for audit logging.
+
+# ───────────────────────────────────────────────────────────────────
+# Infrastructure / performance audit findings (2026-05-25).
+# Cluster of 2 concrete defects discovered during a long-running-stack
+# infrastructure review. See improvements.yaml for the 7 related
+# perf/tuning improvements (I-222..I-228).
+# ───────────────────────────────────────────────────────────────────
+
+- id: B-120
+  title: SQLAlchemy connection pool undersized for sustained load
+  status: open
+  severity: High
+  priority: High
+  area: infrastructure
+  targeted_version: "0.3.5.4"
+  summary: >
+    `db_engine.py:139` configures `pool_size=5, max_overflow=5` (10 conns
+    total). API and worker share this pool. Burst operations
+    (scan + concurrent API requests) can hit `QueuePool timeout` exceptions.
+  plain_summary: |
+    The database connection pool is small enough that under busy moments
+    (scanning while the UI is loading, multiple browser tabs open during
+    an encode batch), connections can run out. When that happens, requests
+    fail with cryptic timeout errors. The fix is one line of config —
+    double the pool size and add metrics to detect future pressure.
+  details: |
+    `reencoder-api/app/db_engine.py:139` and the equivalent file in
+    `reencoder-worker/worker/db_engine.py`. Bump to `pool_size=10,
+    max_overflow=10` (total 20). Pairs well with I-215 (Prometheus
+    metrics) to surface pool saturation before it bites.
+
+- id: B-121
+  title: API, Postgres, and web containers have no memory or CPU limits
+  status: open
+  severity: High
+  priority: High
+  area: infrastructure
+  targeted_version: "0.3.5.4"
+  summary: >
+    Only `reencoder-worker` has `deploy.resources.limits`. API, Postgres,
+    and the web container are unbounded — a single runaway process can
+    OOM the host and take the whole stack down.
+  plain_summary: |
+    The worker is the only container with memory and CPU caps. If a query
+    on a large history table eats all available RAM (or if Postgres tries
+    to use unbounded work_mem), the kernel OOM killer could nuke any of
+    the other containers — or worse, the host. Adding sensible limits to
+    every service caps the blast radius.
+  details: |
+    `docker-compose.yml`. Suggested limits:
+      - `reencoder-api`: cpus "2", memory "2G"
+      - `postgres`:      cpus "2", memory "2G"
+      - `reencoder-web`: cpus "0.5", memory "256M"
+    Mirror in `docker-compose.prod.yml`. Validate on a real deployment
+    before shipping — VAAPI workloads on bigger boxes may want a higher
+    API ceiling.
+
+- id: B-122
+  title: History "View" modal is missing in the new UI (regression from rewrite)
+  status: done
+  severity: High
+  priority: High
+  area: frontend
+  targeted_version: "0.3.5.2"
+  summary: >
+    The legacy static/index.html had a "View" action on every history row that
+    opened a modal with before/after sizes, source vs encoded ffprobe streams
+    (video/audio/subtitles), hashes, the ffmpeg command, and the per-job logs.
+    The v0.3.5.0 React rewrite dropped this entirely — history rows are now
+    read-only summary lines.
+  plain_summary: |
+    In the old UI, you could click "View" on any history item to see exactly
+    what changed: how big the file was before and after, which video/audio/
+    subtitle tracks survived, the hash of both files, the actual ffmpeg
+    command that ran, and the per-job logs. That deep-dive view is gone in
+    the new UI. The data still exists in the database — only the UI to
+    surface it was lost in the migration.
+  details: |
+    Backend already has everything: each row in `/api/history` carries
+    `source_metadata` and `destination_metadata` (parsed ffprobe JSON with
+    `video`, `audio`, `subtitle`, `attachment`, `chapters` arrays),
+    `ffmpeg_cmd`, `original_hash`, `encoded_hash`, `crf_used`, `encoder_used`,
+    `current_frame`, `total_frames`. Logs come from `/api/jobs/{id}/logs`.
+    The fix is pure frontend: a Modal primitive + HistoryDetailModal with
+    tabs (Summary / Source streams / Encoded streams / Logs / Command),
+    plus an Actions column on the history table.
+
+- id: B-123
+  title: cancel_job endpoint crashes with KeyError on every "remove from queue" click
+  status: done
+  severity: Critical
+  priority: High
+  area: backend
+  targeted_version: "0.3.5.2"
+  summary: >
+    `_event_logger.info("job_removed_from_queue", extra={..., "filename":
+    row["filename"]})` collides with Python `LogRecord.filename` (a reserved
+    attribute always populated with the caller's source file). Every cancel
+    of a queued job returns 500 and the event is lost.
+  plain_summary: |
+    Clicking the X to remove a queued file from the queue today crashes the
+    API with HTTP 500. The job is left in `queued` state and the UI shows
+    a generic error. Root cause is a one-line bug: the structured log call
+    inside the cancel endpoint uses the key "filename" in its `extra=` dict,
+    which collides with a Python logging built-in. The reserved name was
+    added without anyone noticing during the per-job-cancel work
+    (around B-122 / F-305 era).
+  details: |
+    `reencoder-api/app/main.py:726`. Trace:
+      File "/app/app/main.py", line 724, in cancel_job
+        _event_logger.info(
+          "job_removed_from_queue",
+          extra={"session_id": ..., "job_id": ..., "filename": row["filename"]},
+        )
+      ...
+      KeyError: "Attempt to overwrite 'filename' in LogRecord"
+
+    Fix: rename the extra key from `filename` to `file` (matches the
+    WebSocket event payload one block above on line 717 which already
+    uses `"file": row["filename"]`).
+
+    Defensive follow-up worth tracking separately: the RingHandler /
+    structured logger should validate `extra=` against the Python reserved
+    list (`filename`, `module`, `pathname`, `lineno`, `funcName`, `name`,
+    `msg`, `args`, `levelname`, `levelno`, `asctime`, `message`, `created`,
+    `msecs`, `relativeCreated`, `thread`, `threadName`, `processName`,
+    `process`, `exc_info`, `exc_text`, `stack_info`) and either prefix
+    collisions (e.g. `ev_filename`) or raise a developer-friendly error at
+    boot time.
+
+- id: B-124
+  title: POST /api/config replaces the entire config instead of merging the patch
+  status: done
+  severity: Critical
+  priority: High
+  area: backend
+  targeted_version: "0.3.5.2"
+  summary: >
+    The save handler accepts the body as a full `Config` Pydantic model;
+    Pydantic silently fills every missing field with its default. Then
+    `cfg.save(config.model_dump())` writes the whole dict, wiping out any
+    field the frontend didn't include in the patch. Every Save click on
+    one settings page destroys settings from every other page.
+  plain_summary: |
+    Clicking Save on Encoding Settings wipes your scan folders. Clicking
+    Save on General Settings resets your encoder back to "cpu" / "medium".
+    Whatever you don't touch on the current page gets reset to defaults
+    because the backend treats the request as a full config replacement
+    instead of a partial patch. Severe data-loss bug — users can lose
+    their entire setup by clicking a single Save button.
+  details: |
+    `reencoder-api/app/main.py:228-234`:
+
+        @app.post("/api/config")
+        async def save_config(config: Config):
+            cfg.save(config.model_dump())
+
+    The `Config` model in `models.py` has defaults for every field
+    (encoder='cpu', preset='medium', scan_folders=[], etc.). Pydantic
+    fills those in for any key the frontend omits. Frontend correctly
+    sends partial patches:
+      - EncodingSettingsPage → {encoder, preset, crf, advanced_encode}
+      - GeneralSettingsPage  → {scan_folders, exclude_folders}
+
+    Fix: read the body as `dict`, merge into the current config, then
+    save:
+
+        @app.post("/api/config")
+        async def save_config(payload: dict):
+            if not isinstance(payload, dict):
+                return JSONResponse({"error": "expected JSON object"}, status_code=400)
+            current = cfg.load()
+            merged = {**current, **payload}
+            try:
+                Config(**merged)  # validate types of the merged result
+            except Exception as exc:
+                return JSONResponse({"error": f"invalid config: {exc}"}, status_code=400)
+            cfg.save(merged)
+            _event_logger.info("config_updated", extra={"keys": sorted(payload.keys())[:8]})
+            return {"ok": True}

@@ -109,3 +109,466 @@
     to the main features.
   details: |
     `frontend/src/pages/DashboardPage.tsx`.
+
+# ───────────────────────────────────────────────────────────────────
+# Code-quality audit findings (2026-05-25). Cluster of 15 new entries
+# from a refactor/observability/test-coverage review of the codebase.
+# ───────────────────────────────────────────────────────────────────
+
+- id: I-207
+  title: Deduplicate database / db_engine / db_backend modules across API and Worker
+  status: open
+  priority: High
+  area: refactor
+  targeted_version: "0.3.7.0"
+  summary: >
+    `reencoder-api/app/database.py` is a byte-equivalent copy of
+    `reencoder-worker/worker/database.py`. Same for `db_engine.py` and
+    `db_backend.py`. Bug fixes have to be applied twice.
+  plain_summary: |
+    The data access layer is duplicated between API and worker. Today a bug
+    fix or schema change needs to be applied in two places, and divergence
+    is a real risk. We want a single shared package.
+  details: |
+    Extract `database.py`, `db_engine.py`, `db_backend.py` into a new
+    `reencoder-db/` package at repo root. Both services install it via
+    `pip install -e ./reencoder-db` in their Dockerfile. Adjust the build
+    contexts in `docker-compose.yml` and the GitHub Actions workflow.
+
+- id: I-208
+  title: Add CI workflow that runs pytest + frontend build on every PR/push
+  status: open
+  priority: High
+  area: devops
+  targeted_version: "0.3.6.0"
+  summary: >
+    The only workflow today is `release.yml` (tag-triggered). There's no
+    PR/push check, so broken builds and failing tests can reach main.
+  plain_summary: |
+    We don't run automated tests on pull requests. Anyone (including
+    future-me) can merge a change that breaks pytest or the frontend build,
+    and we'd only catch it at release time. A simple PR CI prevents that.
+  details: |
+    New `.github/workflows/ci.yml` triggering on `pull_request` and
+    `push` to `main`. Three jobs: `pytest tests/`, `cd frontend && npm
+    ci && npm run build`, and a `tsc -b` typecheck. Cache pip and npm
+    deps via `actions/cache`.
+
+- id: I-209
+  title: Test coverage for WebSocket reconnect / backoff state machine
+  status: open
+  priority: High
+  area: tests
+  targeted_version: "0.3.6.0"
+  summary: >
+    `frontend/src/hooks/useWebSocket.ts` has reconnection with exponential
+    backoff and attempt counter, but no unit tests. Easy to regress silently.
+  plain_summary: |
+    The reconnect logic in the WebSocket hook is subtle: backoff multiplies,
+    caps at a max, resets on success. There's no test, so a future refactor
+    could turn it into either a tight loop or a permanently-disconnected
+    state and we'd notice only when something breaks in production.
+  details: |
+    Add Vitest tests for the hook with a mocked WebSocket. Cases: close →
+    reconnect after N ms; multiple closes → backoff multiplies; success
+    → counter resets to 0; attempts > 6 → stop trying and surface error.
+
+- id: I-210
+  title: Configure Vitest for the frontend test suite
+  status: open
+  priority: High
+  area: frontend
+  targeted_version: "0.3.7.0"
+  summary: >
+    `frontend/package.json` has no `vitest` dep, no `test` script, no
+    `vitest.config.ts`. Zero UI test coverage.
+  plain_summary: |
+    The whole frontend is untested. Form validation, query builders, the
+    history filter logic, the encode store — all of it can break silently.
+    Adding Vitest + React Testing Library unlocks regression tests for the
+    pieces of UI logic that aren't visible at a glance.
+  details: |
+    Add `vitest`, `@vitest/ui`, `@testing-library/react`, `jsdom` to
+    `devDependencies`. Create `vitest.config.ts` with jsdom environment.
+    Add `"test": "vitest"` and `"test:coverage": "vitest --coverage"`
+    scripts. Wire into the CI from I-208.
+
+- id: I-211
+  title: Pytest coverage for the roadmap YAML loader
+  status: open
+  priority: High
+  area: tests
+  targeted_version: "0.3.6.0"
+  summary: >
+    `reencoder-api/app/roadmap.py` is new in v0.3.5.0 and powers the
+    Roadmap page, but has zero test coverage. Schema changes break the
+    admin dashboard silently.
+  plain_summary: |
+    The Roadmap page lives or dies by the YAML loader. If someone adds an
+    entry with a typo, the page crashes. We want tests that verify the
+    loader rejects bad input gracefully and reloads on file changes.
+  details: |
+    New `tests/test_roadmap.py`. Cases: valid YAML → counts + items;
+    missing field → 400 with a clear error; invalid YAML syntax →
+    fallback to empty; mtime change → reload without restart.
+
+- id: I-212
+  title: Replace bare print() statements with structured logging
+  status: open
+  priority: Medium
+  area: observability
+  targeted_version: "0.3.8.0"
+  summary: >
+    Several `print(f"[api] ...")` calls in `main.py` and the worker bypass
+    the logging framework, so they don't reach the Admin Logs ring buffer.
+  plain_summary: |
+    Some debug output uses bare print(). Those lines show up in `docker
+    logs` but not in the in-app Admin Logs page, which means an operator
+    using the UI to triage an issue might miss critical context.
+  details: |
+    `reencoder-api/app/main.py:151-188` and similar spots in the encoder.
+    Replace with `logging.getLogger("reencoder.api").info(..., extra={...})`
+    so structured fields propagate to the ring handler.
+
+- id: I-213
+  title: Centralized error envelope with non-leaking responses
+  status: open
+  priority: Medium
+  area: backend
+  targeted_version: "0.3.8.0"
+  summary: >
+    Several endpoints catch broad exceptions and either print the traceback
+    or return raw `str(e)` to the client. Inconsistent shape, leaks
+    internal details.
+  plain_summary: |
+    Error responses today are inconsistent: some endpoints return clean
+    JSON, others return raw exception messages (including SQL fragments or
+    file paths). A unified `{error, code}` envelope with a server-side log
+    correlation makes triage easier and tightens the leak surface.
+  details: |
+    Add a `CustomException` base class + FastAPI exception handler that
+    returns `{"error": "<safe message>", "code": "<corr-id>"}` and logs
+    the full traceback with the correlation id. Update endpoints listed
+    in `main.py:462-464, 1548-1551`.
+
+- id: I-214
+  title: Admin Logs ring buffer should persist to disk
+  status: open
+  priority: Medium
+  area: observability
+  targeted_version: "0.3.8.0"
+  summary: >
+    `admin_logs._ring` is in-memory only. Restarting the API container
+    wipes pre-crash log history, which is exactly when you need it.
+  plain_summary: |
+    When the API crashes (or you restart it), the Admin Logs page goes
+    blank. The information you'd most want at that moment is gone. Adding
+    a rotating JSONL file behind the ring buffer keeps the last N entries
+    across restarts.
+  details: |
+    `reencoder-api/app/admin_logs.py:37`. Add a rotating JSONL file at
+    `/data/logs/admin.jsonl` (rotate at 5 MB, keep 10 files). On startup,
+    pre-load the most recent 1000 entries into the ring. Serve historical
+    entries on demand via a new `since` query param on `/api/admin/logs/recent`.
+
+- id: I-215
+  title: Expose Prometheus-compatible /metrics endpoint
+  status: open
+  priority: Medium
+  area: observability
+  targeted_version: "0.3.8.0"
+  summary: >
+    No way to monitor SLOs (encode success rate, API latency, queue depth)
+    in production. Ops is blind to gradual degradation.
+  plain_summary: |
+    For long-running deployments, we want metrics: how many encodes per
+    hour, what % succeed, p95 API latency, queue depth, worker liveness.
+    Standard Prometheus exposition format means existing dashboards
+    (Grafana) can scrape it.
+  details: |
+    Add `prometheus-client` to `reencoder-api/requirements.txt`. Instrument:
+    `encode_jobs_total{status}` (counter), `encode_duration_seconds`
+    (histogram), `active_sessions` (gauge), `jobs_pending` (gauge),
+    `api_requests_total{endpoint,status}` (counter). Mount at `/metrics`,
+    gated by Basic auth or a separate `METRICS_TOKEN`.
+
+- id: I-216
+  title: Clarify history filtering pattern (server-side only)
+  status: open
+  priority: Medium
+  area: docs
+  targeted_version: "0.4.1.0"
+  summary: >
+    `HistoryPage.tsx` reads filters from local state AND backend params.
+    Today both work because React Query refetches on key change, but the
+    contract isn't documented and is fragile.
+  plain_summary: |
+    The history filtering UI works correctly but the pattern is confusing
+    to read. A new contributor might think filtering happens client-side
+    and add their own broken version. Document that filtering is 100%
+    server-side and add a code comment in `endpoints.ts`.
+  details: |
+    `frontend/src/pages/HistoryPage.tsx:28-29` and `endpoints.ts:136`.
+    Add a docstring explaining the React Query queryKey dependency, and
+    a top-of-file comment in `HistoryPage` explaining the data flow.
+
+- id: I-217
+  title: Multi-stage Dockerfile for API and worker (smaller images)
+  status: open
+  priority: Low
+  area: infrastructure
+  targeted_version: "0.4.1.0"
+  summary: >
+    Current API/worker images are ~250 MB each. Build tools and dev deps
+    ship in the runtime image. Multi-stage would knock 30-40% off.
+  plain_summary: |
+    The published images are bigger than they need to be. A two-stage
+    build (builder installs deps + builds wheels, runtime copies only
+    site-packages + necessary apt packages) gives a smaller image and a
+    smaller attack surface. Faster pulls too.
+  details: |
+    `reencoder-api/Dockerfile` and `reencoder-worker/Dockerfile`. Split
+    into `FROM python:3.12-slim AS builder` (pip install all wheels) and
+    `FROM python:3.12-slim AS runtime` (copy site-packages, add only
+    runtime apt packages: ffmpeg, postgresql-client for API,
+    mesa-va-drivers for worker).
+
+- id: I-218
+  title: Enforce frontend lockfile usage (npm ci, no caret ranges in deploy)
+  status: open
+  priority: Low
+  area: devops
+  targeted_version: "0.4.1.0"
+  summary: >
+    `frontend/package.json` uses caret ranges (`^5.62.7`). Each CI build
+    could resolve to a different minor version. `npm ci --frozen-lockfile`
+    + a quarterly upgrade audit is more reliable.
+  plain_summary: |
+    The frontend deps use caret ranges, so the exact version installed
+    depends on when you ran `npm install`. That's fine for development
+    but a reproducibility risk for production builds. Switching the
+    Dockerfile to `npm ci` (which respects the lockfile exactly) makes
+    builds deterministic.
+  details: |
+    `frontend/Dockerfile`: change `npm install` → `npm ci`. Document the
+    quarterly upgrade ritual in CONTRIBUTING.md once that file exists.
+
+- id: I-219
+  title: Fix nullable stats fields with a Pydantic validator instead of frontend coercion
+  status: open
+  priority: Low
+  area: backend
+  targeted_version: "0.4.1.0"
+  summary: >
+    `frontend/src/api/endpoints.ts:136` has a comment about coercing
+    backend nulls to 0 for the failed-jobs stat. The right fix is on the
+    backend.
+  plain_summary: |
+    The frontend papers over a backend quirk where the count of failed
+    jobs can come back as null instead of 0. Fixing the Pydantic model to
+    enforce non-null integers removes the workaround and tightens the
+    API contract.
+  details: |
+    Add a Pydantic validator to the stats response model enforcing
+    `int` (not `Optional[int]`). Update the SQL query to coalesce nulls
+    server-side: `COALESCE(SUM(CASE WHEN status='failed' THEN 1 END), 0)`.
+    Drop the comment + coercion from `endpoints.ts:136`.
+
+- id: I-220
+  title: Add OpenAPI docstrings and response_model annotations to all endpoints
+  status: open
+  priority: Low
+  area: docs
+  targeted_version: "0.4.1.0"
+  summary: >
+    FastAPI's `/docs` works but endpoints are unannotated, so the auto-
+    generated schema lacks summaries, response shapes, and field examples.
+  plain_summary: |
+    FastAPI gives us Swagger / OpenAPI docs for free at `/docs`, but the
+    schema is bare because endpoints lack docstrings and response_model
+    hints. Annotating them makes the API discoverable for third-party
+    integrations and helps future contributors.
+  details: |
+    `reencoder-api/app/main.py`: add `summary`, `description`, and
+    `response_model=` to every `@app.get/post`. Tag groups
+    (`tags=["scan", "encode", "history", "admin"]`). Add `examples` to
+    Pydantic model fields where the shape isn't obvious.
+
+- id: I-221
+  title: Accessibility — visible keyboard focus on all interactive controls
+  status: open
+  priority: Low
+  area: a11y
+  targeted_version: "0.4.2.0"
+  summary: >
+    Tailwind's default `focus:` styles are not applied. Keyboard-only
+    navigation has no visible focus ring on buttons, links, or inputs.
+  plain_summary: |
+    Users who navigate with Tab can't see what's currently focused. That
+    breaks accessibility (WCAG 2.1 AA) and just makes the UI feel
+    unfinished for power users who don't reach for a mouse.
+  details: |
+    Add a global `focus-visible:ring-2 focus-visible:ring-accent
+    focus-visible:outline-none focus-visible:ring-offset-1` to every
+    `<button>`, `<a>`, and form input. Centralize via Tailwind plugin
+    or a `:where()` selector in `styles.css`.
+
+# ───────────────────────────────────────────────────────────────────
+# Infrastructure / performance audit findings (2026-05-25). Cluster of
+# 7 perf and ops improvements complementing B-120/B-121.
+# ───────────────────────────────────────────────────────────────────
+
+- id: I-222
+  title: Bump FastAPI from 0.115 to >= 0.120
+  status: open
+  priority: Medium
+  area: dependencies
+  targeted_version: "0.3.6.0"
+  summary: >
+    `reencoder-api/requirements.txt` pins FastAPI 0.115.0. Current is
+    0.120+; 5 minor releases of middleware fixes and perf work missed.
+  plain_summary: |
+    Our FastAPI is two minor versions behind. Each release in this range
+    fixed bugs in middleware ordering, async cancellation, and request
+    parsing. Bumping is cheap (no breaking changes between 0.115 and
+    0.120) and lets us benefit from the upstream work.
+  details: |
+    Edit `reencoder-api/requirements.txt:1` to `fastapi>=0.120.0,<0.121`.
+    Run `pip install -U fastapi` locally, run the pytest suite to
+    confirm WebSocket and auth middleware still pass.
+
+- id: I-223
+  title: Serialize encode-start / job-status updates in a single transaction
+  status: open
+  priority: High
+  area: backend
+  targeted_version: "0.3.7.0"
+  summary: >
+    API marks an encode as `queued` and worker reads job state from
+    separate transactions. Postgres READ_COMMITTED leaves a small window
+    where a refactor could trigger duplicate processing.
+  plain_summary: |
+    Today, when you click Encode, the API writes "queued" to the jobs row
+    and the worker reads it back to start processing. They're two
+    independent transactions. It works because nothing else writes to
+    that row concurrently, but if we ever add job dependencies or
+    multi-worker support, this becomes a real race. Wrapping the read +
+    state transition in a single transaction prevents that.
+  details: |
+    `reencoder-api/app/database.py` (the encode-start path) and the
+    worker's `process_session`. Wrap the read + status update in a
+    single `BEGIN IMMEDIATE; UPDATE jobs ... WHERE id=? AND
+    status='queued'; ... COMMIT;`. Document jobs.status as the single
+    source of truth.
+
+- id: I-224
+  title: Postgres tuning for metastore workload (shared_buffers, work_mem, indexes)
+  status: open
+  priority: High
+  area: infrastructure
+  targeted_version: "0.3.7.0"
+  summary: >
+    `postgres:16-alpine` runs with stock defaults (shared_buffers=128MB,
+    work_mem=4MB, random_page_cost=4). Inadequate for a metastore that
+    accumulates 100k+ rows over months.
+  plain_summary: |
+    Postgres defaults are tuned for tiny throwaway databases. For a
+    long-running metastore, we want larger buffer pools, more work_mem
+    for sorts, and indexes on the columns we actually filter on
+    (status + created_at, session_id). After a year of unattended
+    operation, history queries get slow without this.
+  details: |
+    `docker-compose.yml` postgres service: add `command: postgres -c
+    shared_buffers=512MB -c work_mem=16MB -c effective_cache_size=1GB
+    -c random_page_cost=1.1`. Verify schema has indexes on `(status,
+    created_at)` and `(session_id)`; add migration if missing. Mirror
+    in `docker-compose.prod.yml`.
+
+- id: I-225
+  title: Postgres WAL and checkpoint tuning to cap pg_wal growth
+  status: open
+  priority: Medium
+  area: infrastructure
+  targeted_version: "0.3.7.0"
+  summary: >
+    No `checkpoint_timeout` or `max_wal_size` override. During heavy
+    progress-update loops, `pg_wal/` can grow to 1-2 GB before a
+    checkpoint reclaims it.
+  plain_summary: |
+    Postgres writes a transaction log (WAL) for every change. By default,
+    it checkpoints (compacts the log) every 5 minutes or 1 GB. During
+    encoding, we write hundreds of progress updates per minute, so the
+    log can balloon and then suddenly checkpoint, causing a brief I/O
+    storm. Tuning these two settings smooths it out.
+  details: |
+    Pairs with I-224 — add `-c checkpoint_timeout=300 -c
+    max_wal_size=512MB` to the same postgres `command:` block. Watch
+    disk usage after the change to confirm WAL stays bounded.
+
+- id: I-226
+  title: Worker healthcheck should detect stalled ffmpeg, not just a live loop
+  status: open
+  priority: Medium
+  area: infrastructure
+  targeted_version: "0.3.8.0"
+  summary: >
+    Heartbeat file is touched at every loop iteration but says nothing
+    about whether ffmpeg itself is making progress. A hung mount could
+    pin the encoder while the loop keeps writing heartbeat updates.
+  plain_summary: |
+    The worker healthcheck verifies the loop is alive (heartbeat file
+    mtime). It does not verify that ffmpeg is actually advancing through
+    frames. If ffmpeg gets stuck on a hung mount or a corrupt input,
+    the healthcheck passes but no work happens for hours. We want a
+    second timestamp (last-progress-update) that, if older than 5
+    minutes, marks the worker unhealthy.
+  details: |
+    Write a second sentinel file `/data/.worker_last_progress` whenever
+    the encoder reports a new frame number. Update the docker-compose
+    healthcheck to check both files. Allow a generous initial window
+    (e.g., 10 min) for slow VAAPI initialization on first job.
+
+- id: I-227
+  title: API healthcheck timeout too tight for slow DB starts
+  status: open
+  priority: Medium
+  area: infrastructure
+  targeted_version: "0.3.6.0"
+  summary: >
+    `docker-compose.yml` sets `timeout: 5s` on the API healthcheck. After
+    a crash, Postgres WAL replay can make `/api/health` return in 6-8s,
+    failing the check even though the app is healthy.
+  plain_summary: |
+    Right after a crash, Postgres needs to replay its WAL log before
+    accepting connections, which can take 10-15 seconds on a busy
+    database. During that window, our API's healthcheck (5 second
+    timeout) marks the container unhealthy and Docker tries to restart
+    it — making the recovery worse. A bigger timeout absorbs that brief
+    slowness without false positives.
+  details: |
+    `docker-compose.yml:105-112`. Bump `timeout: 5s` → `10s`. Adjust
+    `retries` so total grace = start_period + retries*interval is ~60s.
+    Mirror in `docker-compose.prod.yml`.
+
+- id: I-228
+  title: Publish arm64 images alongside amd64 in release workflow
+  status: open
+  priority: Low
+  area: infrastructure
+  targeted_version: "0.4.2.0"
+  summary: >
+    `release.yml` builds only `linux/amd64`. Raspberry Pi 4/5, NVIDIA
+    Jetson, and Apple Silicon homelabs can't pull prebuilt images.
+  plain_summary: |
+    A growing slice of self-hosted setups runs on ARM (Pi 5, Jetson,
+    Asahi-on-M1). Today they have to rebuild locally because our
+    workflow only ships amd64. Adding `linux/arm64` to the platforms
+    list takes one line in the workflow and roughly doubles the build
+    time, but unlocks a large segment of potential users.
+  details: |
+    `.github/workflows/release.yml:85`. Change `platforms: linux/amd64`
+    → `platforms: linux/amd64,linux/arm64`. The worker build will be
+    slower under QEMU emulation; consider native arm64 runners
+    (`ubuntu-24.04-arm`) once they're generally available to skip
+    emulation. Test that the encoder actually works on arm64 hardware
+    (VAAPI on Pi is limited).
